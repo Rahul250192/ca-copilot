@@ -27,17 +27,26 @@ def upgrade() -> None:
     
     if 'gstins' not in columns:
         op.add_column('clients', sa.Column('gstins', postgresql.JSONB(astext_type=sa.Text()), nullable=True, server_default='[]'))
-    try:
+    
+    # Add other professional columns safely
+    new_cols = ['pan', 'cin', 'tan', 'iec']
+    for col in new_cols:
+        if col not in columns:
+            op.add_column('clients', sa.Column(col, sa.String(), nullable=True))
+    if 'gst_number' in columns:
         op.drop_column('clients', 'gst_number')
-    except Exception:
-        pass
 
     # 2. Make Services Global (remove firm_id)
-    try:
-        op.drop_constraint('services_firm_id_fkey', 'services', type_='foreignkey')
+    svc_columns = [c['name'] for c in inspector.get_columns('services')]
+    if 'firm_id' in svc_columns:
+        # Check if FK exists before dropping
+        fks = inspector.get_foreign_keys('services')
+        fk_names = [fk['name'] for fk in fks if fk.get('name')]
+        
+        if 'services_firm_id_fkey' in fk_names:
+            op.drop_constraint('services_firm_id_fkey', 'services', type_='foreignkey')
+            
         op.drop_column('services', 'firm_id')
-    except Exception as e:
-        print(f"Note: {e}")
 
 
 def downgrade() -> None:
