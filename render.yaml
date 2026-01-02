@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: ca-copilot-api
+    runtime: docker
+    plan: free
+    region: singapore # Change to your preferred region
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: "knowledge-kits"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: BACKEND_CORS_ORIGINS
+        value: '["*"]'
+      - key: APP_RELOAD
+        value: "false"
+    autoDeploy: true
