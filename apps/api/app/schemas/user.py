@@ -8,6 +8,9 @@ from app.models.models import UserRole
 class UserBase(BaseModel):
     email: EmailStr
     full_name: Optional[str] = None
+    phone_number: Optional[str] = None
+    job_title: Optional[str] = None
+    subscription_plan: Optional[str] = "free"
     role: UserRole = UserRole.STAFF
 
 # Properties to receive via API on creation
