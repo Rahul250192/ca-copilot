@@ -17,7 +17,6 @@ class ServiceUpdate(ServiceBase):
 
 class ServiceInDBBase(ServiceBase):
     id: UUID
-    firm_id: UUID
     created_at: datetime
 
     class Config:

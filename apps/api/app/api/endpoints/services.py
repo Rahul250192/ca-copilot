@@ -19,11 +19,9 @@ async def read_services(
     current_user: User = Depends(deps.get_current_user),
 ) -> Any:
     """
-    Retrieve services for the firm.
+    Retrieve services.
     """
-    query = select(Service).options(selectinload(Service.kits)).where(
-        Service.firm_id == current_user.firm_id
-    ).offset(skip).limit(limit)
+    query = select(Service).options(selectinload(Service.kits)).offset(skip).limit(limit)
     result = await db.execute(query)
     return result.scalars().all()
 
@@ -39,8 +37,7 @@ async def create_service(
     """
     service = Service(
         name=service_in.name,
-        description=service_in.description,
-        firm_id=current_user.firm_id
+        description=service_in.description
     )
     
     if service_in.kit_ids:
@@ -63,8 +60,7 @@ async def read_service(
     Get service by ID.
     """
     query = select(Service).options(selectinload(Service.kits)).where(
-        Service.id == service_id, 
-        Service.firm_id == current_user.firm_id
+        Service.id == service_id
     )
     result = await db.execute(query)
     service = result.scalars().first()
@@ -83,8 +79,7 @@ async def update_service_kits(
     Update the kits attached to a service.
     """
     query = select(Service).where(
-        Service.id == service_id, 
-        Service.firm_id == current_user.firm_id
+        Service.id == service_id
     )
     result = await db.execute(query)
     service = result.scalars().first()

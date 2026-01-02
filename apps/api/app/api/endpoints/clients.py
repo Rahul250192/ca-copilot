@@ -11,6 +11,50 @@ from app.schemas import client as client_schemas
 
 router = APIRouter()
 
+@router.get("/generate-id")
+async def generate_client_id(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """
+    Generate a new client ID (e.g. CL-001).
+    """
+    query = select(Client).where(Client.firm_id == current_user.firm_id)
+    result = await db.execute(query)
+    count = len(result.scalars().all())
+    return {"id": f"CL-{count + 1:03d}"}
+
+@router.put("/{client_id}/services-by-name")
+async def update_client_services_by_name(
+    client_id: UUID,
+    service_names: List[str],
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """
+    Update client services using names (Frontend Compatibility).
+    """
+    # 1. Get Client
+    query = select(Client).options(selectinload(Client.services)).where(
+        Client.id == client_id, 
+        Client.firm_id == current_user.firm_id
+    )
+    result = await db.execute(query)
+    client = result.scalars().first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    # 2. Find services (Strict)
+    svc_query = select(Service).where(Service.name.in_(service_names))
+    svc_result = await db.execute(svc_query)
+    existing_services = svc_result.scalars().all()
+    
+    # 3. Assign (Strictly existing ones)
+    client.services = existing_services
+    await db.commit()
+    
+    return {"status": "ok", "updated_count": len(existing_services)}
+
 @router.get("/", response_model=List[client_schemas.Client])
 async def read_clients(
     db: AsyncSession = Depends(deps.get_db),

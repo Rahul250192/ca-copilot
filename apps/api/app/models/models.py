@@ -62,7 +62,6 @@ class Firm(Base):
 
     users = relationship("User", back_populates="firm")
     clients = relationship("Client", back_populates="firm")
-    services = relationship("Service", back_populates="firm")
 
 class User(Base):
     __tablename__ = "users"
@@ -80,6 +79,7 @@ class Client(Base):
     __tablename__ = "clients"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
+    client_id = Column(String, unique=True, nullable=True)  # E.g. CL-001
     gstins = Column(JSONB, default=[])
     pan = Column(String, nullable=True)
     cin = Column(String, nullable=True)
@@ -108,10 +108,8 @@ class Service(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     description = Column(Text)
-    firm_id = Column(UUID(as_uuid=True), ForeignKey("firms.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    firm = relationship("Firm", back_populates="services")
     kits = relationship("Kit", secondary=service_kits, back_populates="services")
     clients = relationship("Client", secondary=client_services, back_populates="services")
 
