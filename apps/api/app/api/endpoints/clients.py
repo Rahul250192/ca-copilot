@@ -113,7 +113,9 @@ async def read_client(
     """
     Get client by ID.
     """
-    query = select(Client).options(selectinload(Client.services)).where(
+    query = select(Client).options(
+        selectinload(Client.services).selectinload(Service.kits)
+    ).where(
         Client.id == client_id, 
         Client.firm_id == current_user.firm_id
     )
