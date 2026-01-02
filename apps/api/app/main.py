@@ -10,14 +10,22 @@ app = FastAPI(
 )
 
 # Set all CORS enabled origins
-if settings.BACKEND_CORS_ORIGINS:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+all_origins = [str(origin) for origin in settings.BACKEND_CORS_ORIGINS]
+# Whitelist production frontend and local dev
+all_origins.extend([
+    "https://complianceaiexpert.netlify.app",
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:3000"
+])
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=all_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
