@@ -106,7 +106,7 @@ async def read_client_services(
 @router.put("/{client_id}/services")
 async def attach_services(
     client_id: UUID,
-    service_ids: List[UUID],
+    service_in: client_schemas.ClientServicesUpdate,
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_user),
 ):
@@ -122,7 +122,7 @@ async def attach_services(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
         
-    service_query = select(Service).where(Service.id.in_(service_ids))
+    service_query = select(Service).where(Service.id.in_(service_in.service_ids))
     service_result = await db.execute(service_query)
     client.services = service_result.scalars().all()
     

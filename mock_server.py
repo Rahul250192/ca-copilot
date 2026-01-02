@@ -40,6 +40,27 @@ CLIENTS = [
         "services": []
     }
 ]
+SERVICES = [
+    {"id": "s1", "name": "GST Refund", "description": "Automated GST refund processing and reconciliation."},
+    {"id": "s2", "name": "Income Tax Filing", "description": "Seamless income tax return filing for individuals and businesses."},
+    {"id": "s3", "name": "Corporate Compliance", "description": "Annual filings and ROC compliance management."},
+    {"id": "s4", "name": "Audit Support", "description": "Expert assistance for statutory and internal audits."}
+]
+
+# Client-Service mappings (id -> list of service_ids)
+CLIENT_SERVICES = {
+    "c1": ["s1"],
+    "c2": ["s1", "s2"]
+}
+
+# Mock Documents
+DOCUMENTS = {
+    "c1": [
+        {"id": "doc1", "title": "GSTR-2A Reconciliation Sept 2023.pdf", "status": "ready", "created_at": "2023-10-01T10:00:00"},
+        {"id": "doc2", "title": "Statement 3 - Export Invoices.xlsx", "status": "ready", "created_at": "2023-10-05T14:30:00"}
+    ]
+}
+
 CONVERSATIONS = {}
 
 # Pydantic Models
@@ -56,6 +77,9 @@ class ClientCreate(BaseModel):
     cin: Optional[str] = None
     tan: Optional[str] = None
     iec: Optional[str] = None
+
+class ServiceAssign(BaseModel):
+    service_ids: List[str]
 
 class ChatRequest(BaseModel):
     content: str
@@ -79,7 +103,12 @@ def login(username: str = Form(...), password: str = Form(...)):
     # Simple mock check
     return {
         "access_token": "mock_token_" + str(uuid.uuid4()),
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "user": {
+            "id": "u1",
+            "full_name": "Demo User",
+            "email": "demo@example.com"
+        }
     }
 
 @app.get("/api/v1/auth/me")
@@ -90,14 +119,27 @@ def get_me():
         "firm_name": "Compliance Experts"
     }
 
+@app.get("/api/v1/services/", response_model=List[dict])
+def list_available_services():
+    return SERVICES
+
 @app.get("/api/v1/clients/")
 def list_clients():
-    return CLIENTS
+    # Enrich clients with their activated services for the dashboard
+    enriched_clients = []
+    for c in CLIENTS:
+        cid = c["id"]
+        c_copy = c.copy()
+        s_ids = CLIENT_SERVICES.get(cid, [])
+        c_copy["services"] = [s for s in SERVICES if s["id"] in s_ids]
+        enriched_clients.append(c_copy)
+    return enriched_clients
 
 @app.post("/api/v1/clients/")
 def create_client(client: ClientCreate):
+    new_id = str(uuid.uuid4())
     new_client = {
-        "id": str(uuid.uuid4()),
+        "id": new_id,
         "name": client.name,
         "gstins": client.gstins,
         "pan": client.pan,
@@ -107,14 +149,32 @@ def create_client(client: ClientCreate):
         "services": []
     }
     CLIENTS.append(new_client)
+    CLIENT_SERVICES[new_id] = []
     return new_client
 
 @app.get("/api/v1/clients/{client_id}")
 def get_client(client_id: str):
     for c in CLIENTS:
         if c["id"] == client_id:
-            return c
+            c_copy = c.copy()
+            s_ids = CLIENT_SERVICES.get(client_id, [])
+            c_copy["services"] = [s for s in SERVICES if s["id"] in s_ids]
+            return c_copy
     raise HTTPException(status_code=404, detail="Client not found")
+
+@app.get("/api/v1/clients/{client_id}/services")
+def get_client_services(client_id: str):
+    s_ids = CLIENT_SERVICES.get(client_id, [])
+    return [s for s in SERVICES if s["id"] in s_ids]
+
+@app.put("/api/v1/clients/{client_id}/services")
+def update_client_services(client_id: str, data: ServiceAssign):
+    CLIENT_SERVICES[client_id] = data.service_ids
+    return {"status": "ok"}
+
+@app.get("/api/v1/clients/{client_id}/documents")
+def get_client_documents(client_id: str):
+    return DOCUMENTS.get(client_id, [])
 
 @app.post("/api/v1/conversations/")
 def create_conversation(conv: ConversationCreate):
@@ -134,8 +194,12 @@ def chat(id: str, req: ChatRequest):
     }
 
 @app.post("/api/v1/documents/upload")
-async def upload_document(file: UploadFile = File(...), title: str = Form(...), scope: str = Form(...)):
-    return {"status": "success", "id": str(uuid.uuid4()), "message": f"Document '{title}' uploaded and ingested."}
+async def upload_document(file: UploadFile = File(...), title: str = Form(...), scope: str = Form(...), client_id: Optional[str] = Form(None)):
+    new_doc = {"id": str(uuid.uuid4()), "title": title, "status": "ready", "created_at": datetime.utcnow().isoformat()}
+    if client_id:
+        if client_id not in DOCUMENTS: DOCUMENTS[client_id] = []
+        DOCUMENTS[client_id].append(new_doc)
+    return {"status": "success", "id": new_doc["id"], "message": f"Document '{title}' uploaded and ingested."}
 
 if __name__ == "__main__":
     import uvicorn

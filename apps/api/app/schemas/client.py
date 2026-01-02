@@ -19,6 +19,9 @@ class ClientCreate(ClientBase):
 class ClientUpdate(ClientBase):
     pass
 
+class ClientServicesUpdate(BaseModel):
+    service_ids: List[UUID]
+
 class ClientInDBBase(ClientBase):
     id: UUID
     firm_id: UUID
