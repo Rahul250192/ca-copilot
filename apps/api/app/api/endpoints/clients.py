@@ -44,18 +44,16 @@ async def update_client_services_by_name(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # 2. Find services by name (GLOBAL now)
-    # Case-insensitive search ideally, or exact match
-    # Since we seeded "GST Refund", "Invoice", let's exact match first
+    # 2. Find services (Strict)
     svc_query = select(Service).where(Service.name.in_(service_names))
     svc_result = await db.execute(svc_query)
-    found_services = svc_result.scalars().all()
+    existing_services = svc_result.scalars().all()
     
-    # 3. Assign
-    client.services = found_services
+    # 3. Assign (Strictly existing ones)
+    client.services = existing_services
     await db.commit()
     
-    return {"status": "ok", "updated_count": len(found_services)}
+    return {"status": "ok", "updated_count": len(existing_services)}
 
 @router.get("/", response_model=List[client_schemas.Client])
 async def read_clients(

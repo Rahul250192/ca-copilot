@@ -33,6 +33,13 @@ def upgrade() -> None:
     for col in new_cols:
         if col not in columns:
             op.add_column('clients', sa.Column(col, sa.String(), nullable=True))
+            
+    if 'client_id' not in columns:
+        op.add_column('clients', sa.Column('client_id', sa.String(), nullable=True))
+        try:
+            op.create_unique_constraint('uq_clients_client_id', 'clients', ['client_id'])
+        except Exception:
+            pass
     if 'gst_number' in columns:
         op.drop_column('clients', 'gst_number')
 
