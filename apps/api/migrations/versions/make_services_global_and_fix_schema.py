@@ -20,7 +20,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # 1. Fix Clients Schema (gstins vs gst_number)
-    op.add_column('clients', sa.Column('gstins', postgresql.JSONB(astext_type=sa.Text()), nullable=True, server_default='[]'))
+    try:
+        op.add_column('clients', sa.Column('gstins', postgresql.JSONB(astext_type=sa.Text()), nullable=True, server_default='[]'))
+    except Exception:
+        pass
     try:
         op.drop_column('clients', 'gst_number')
     except Exception:
