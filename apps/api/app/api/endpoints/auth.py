@@ -83,3 +83,25 @@ async def read_users_me(
     Get current user.
     """
     return current_user
+
+@router.put("/me", response_model=user_schemas.User)
+async def update_user_me(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    user_in: user_schemas.UserProfileUpdate,
+    current_user: User = Depends(deps.get_current_user),
+) -> Any:
+    """
+    Update own profile.
+    """
+    if user_in.phone_number is not None:
+        current_user.phone_number = user_in.phone_number
+    if user_in.job_title is not None:
+        current_user.job_title = user_in.job_title
+    if user_in.subscription_plan is not None:
+        current_user.subscription_plan = user_in.subscription_plan
+        
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
+    return current_user
