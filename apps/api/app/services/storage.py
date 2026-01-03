@@ -40,22 +40,54 @@ class GoogleDriveService:
             except Exception as e:
                 print(f"❌ Failed to init Google Drive: {e}")
 
+    def _find_or_create_folder(self, folder_name: str, parent_id: str) -> Optional[str]:
+        query = f"name = '{folder_name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        try:
+            results = self.service.files().list(q=query, fields="files(id)").execute()
+            items = results.get('files', [])
+            if items:
+                return items[0]['id']
+            
+            # Create if not exists
+            file_metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': [parent_id]
+            }
+            folder = self.service.files().create(body=file_metadata, fields='id').execute()
+            return folder.get('id')
+        except Exception as e:
+            print(f"Drive Folder Error: {e}")
+            return None
+
     def upload_file(self, file_content: bytes, path: str, content_type: str = "application/octet-stream") -> Optional[str]:
         if not self.enabled or not self.service:
             return None
         
         try:
-            # 1. Create file metadata
-            # Note: Path "folder/file" mapping to Drive Folders is complex. 
-            # Simplified: We just upload everything to the Root Folder with the filename = path
-            # Or better: We specifically put it in the configured folder.
+            # Hierarchy: path is like "Firm Name/Jobs/Temp/file.zip" or "jobs/temp/id/file"
+            # We want to create folders for directories in 'path' relative to self.folder_id
             
-            # Simple approach: Flatten path slashes to dashes for filename uniqueness
-            filename = path.replace("/", "_")
+            parts = path.strip("/").split("/")
+            filename = parts[-1]
+            folders = parts[:-1]
+            
+            current_parent_id = self.folder_id
+            
+            # Traverse/Create folders
+            if current_parent_id:
+                for folder_name in folders:
+                    next_id = self._find_or_create_folder(folder_name, current_parent_id)
+                    if next_id:
+                        current_parent_id = next_id
+                    else:
+                        print(f"Could not create folder {folder_name}")
+                        # Fallback to current parent
+                        break
             
             file_metadata = {
                 'name': filename,
-                'parents': [self.folder_id] if self.folder_id else []
+                'parents': [current_parent_id] if current_parent_id else []
             }
             
             media = MediaIoBaseUpload(io.BytesIO(file_content), mimetype=content_type, resumable=True)
@@ -66,8 +98,7 @@ class GoogleDriveService:
                 fields='id, webViewLink'
             ).execute()
             
-            print(f"Uploaded to Drive: ID={file.get('id')}")
-            # Return the Drive File ID as the "path" for future reference
+            # Return the Drive File ID 
             return file.get('id')
             
         except Exception as e:

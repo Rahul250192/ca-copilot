@@ -22,9 +22,13 @@ class Settings(BaseSettings):
     SUPABASE_BUCKET: str = "knowledge-kits"
 
     # Google Drive Storage
-    STORAGE_PROVIDER: str = "supabase" # 'supabase' or 'google_drive'
+    STORAGE_PROVIDER: str = "google_drive" # 'supabase' or 'google_drive'
     GOOGLE_CREDENTIALS_PATH: str = "google-credentials.json"
     GOOGLE_DRIVE_FOLDER_ID: Optional[str] = None
+    
+    # GST Services
+    APPYFLOW_API_KEY: Optional[str] = None
+
 
     BACKEND_CORS_ORIGINS: List[str] = []
 
