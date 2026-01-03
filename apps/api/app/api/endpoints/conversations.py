@@ -1,7 +1,7 @@
 from typing import Any, List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import or_, and_, delete, insert
@@ -180,5 +180,86 @@ async def attach_kits(
     else:
         conv.attached_kits = []
     
+    
     await db.commit()
     return {"status": "ok"}
+
+from app.models.models import Document, DocumentStatus
+from app.services.ingestion import ingest_document
+import os
+
+@router.post("/{conv_id}/upload")
+async def upload_conversation_document(
+    conv_id: UUID,
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    title: str = Form(...),
+    current_user: Any = Depends(deps.get_current_user),
+) -> Any:
+    """
+    Upload a document via Chat. 
+    It will be stored as a CLIENT scope document for the client associated with this conversation.
+    """
+    # 1. Verify Conversation & Auth
+    stmt = select(Conversation).where(
+        Conversation.id == conv_id,
+        Conversation.firm_id == current_user.firm_id
+    )
+    result = await db.execute(stmt)
+    conv = result.scalars().first()
+    
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # 2. Upload Logic (reuse Client Context logic)
+    cloud_path = f"{conv.client_id}/{file.filename}"
+    bucket = "client-context"
+    
+    from app.services.storage import storage_service
+    
+    file_content = await file.read()
+    uploaded_path = storage_service.upload_file(
+        file_content=file_content,
+        path=cloud_path,
+        bucket=bucket,
+        content_type=file.content_type
+    )
+
+    if not uploaded_path:
+        # Fallback
+        UPLOAD_DIR = "storage"
+        firm_id_str = str(current_user.firm_id)
+        save_dir = os.path.join(UPLOAD_DIR, firm_id_str, "CLIENT", str(conv.client_id))
+        os.makedirs(save_dir, exist_ok=True)
+        file_path = os.path.join(save_dir, file.filename)
+        with open(file_path, "wb") as buffer:
+            buffer.write(file_content)
+        final_path = file_path
+    else:
+        final_path = uploaded_path
+
+    # 3. Create Document DB Record (Scope=CLIENT)
+    try:
+        document = Document(
+            title=title,
+            scope=Scope.CLIENT,
+            firm_id=current_user.firm_id,
+            client_id=conv.client_id,
+            status=DocumentStatus.UPLOADED,
+            file_path=final_path
+            # Note: We don't link to conversation because Document model has no conv_id.
+            # It just becomes part of the Client's knowledge.
+        )
+        db.add(document)
+        await db.commit()
+        await db.refresh(document)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+    # 4. Trigger Ingestion
+    background_tasks.add_task(ingest_document, document.id)
+
+    return document

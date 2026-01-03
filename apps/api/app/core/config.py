@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     SUPABASE_KEY: Optional[str] = None
     SUPABASE_BUCKET: str = "knowledge-kits"
 
+    # Google Drive Storage
+    STORAGE_PROVIDER: str = "supabase" # 'supabase' or 'google_drive'
+    GOOGLE_CREDENTIALS_PATH: str = "google-credentials.json"
+    GOOGLE_DRIVE_FOLDER_ID: Optional[str] = None
+
     BACKEND_CORS_ORIGINS: List[str] = []
 
     @validator("DATABASE_URL", pre=True)
