@@ -12,7 +12,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = '1234567890ab'
-down_revision = None # Should identify the actual parent but focusing on functionality
+down_revision = 'create_job_tables' # Changed from None
 branch_labels = None
 depends_on = None
 

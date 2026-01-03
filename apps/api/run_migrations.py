@@ -15,6 +15,7 @@ if not os.getenv("DATABASE_URL") or not os.getenv("SECRET_KEY"):
     sys.exit(1)
 
 # Run Alembic
-alembic_cfg = Config("alembic.ini")
+ini_path = os.path.join(os.path.dirname(__file__), "alembic.ini")
+alembic_cfg = Config(ini_path)
 command.upgrade(alembic_cfg, "head")
 print("Migration successful.")

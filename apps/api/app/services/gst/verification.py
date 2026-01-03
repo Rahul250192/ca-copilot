@@ -28,34 +28,69 @@ def verify_gstins(input_bytes_list: List[bytes]) -> bytes:
     # 1. Extract GSTINs
     for file_bytes in input_bytes_list:
         try:
-            # Load with pandas for easier column finding
-            # Assumption: Header is in first few rows. We'll try to find it.
-            df = pd.read_excel(io.BytesIO(file_bytes), sheet_name="B2B")
+            xls = pd.ExcelFile(io.BytesIO(file_bytes))
             
-            # Normalize headers
-            df.columns = [clean_header(c) for c in df.columns]
+            # Find B2B sheet (case-insensitive)
+            b2b_sheet = next((s for s in xls.sheet_names if s.lower() == "b2b"), None)
             
-            # Find GSTIN column (smart search)
-            gstin_col = None
-            for col in df.columns:
-                if "gstin" in col and "supplier" in col:
-                    gstin_col = col
-                    break
-            
-            if not gstin_col:
-                # Fallback: exact match "gstin of supplier"
-                if "gstin of supplier" in df.columns:
-                    gstin_col = "gstin of supplier"
+            if not b2b_sheet:
+                print("Sheet 'B2B' not found in file. Skipping.")
+                continue
 
-            if gstin_col:
-                 # Extract unique valid-looking GSTINs
-                 # Regex for GSTIN: \d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}
-                 # Simplified: 15 chars
-                 raw_gstins = df[gstin_col].dropna().astype(str).unique()
-                 for g in raw_gstins:
-                     g = g.strip().upper()
-                     if len(g) == 15:
-                         all_gstins.add(g)
+            try:
+                # Scan first 20 rows for header in B2B sheet
+                df_scan = pd.read_excel(xls, sheet_name=b2b_sheet, header=None, nrows=20)
+                
+                header_row_idx = -1
+                for idx, row in df_scan.iterrows():
+                    # Convert row to string and check for keywords
+                    row_vals = [str(v).lower().strip() for v in row.values]
+                    
+                    # Target: "GSTIN of supplier" or similar
+                    has_gstin = any("gstin" in v for v in row_vals)
+                    has_supplier = any("supplier" in v for v in row_vals)
+                    
+                    if has_gstin and has_supplier:
+                        header_row_idx = idx
+                        break
+                
+                if header_row_idx == -1:
+                     # Fallback check
+                     for idx, row in df_scan.iterrows():
+                        row_vals = [str(v).lower().strip() for v in row.values]
+                        # "gstin/uin of supplier"
+                        if any("gstin" in v and "supplier" in v for v in row_vals):
+                             header_row_idx = idx
+                             break
+
+                if header_row_idx != -1:
+                    # Reload with correct header
+                    df = pd.read_excel(xls, sheet_name=b2b_sheet, header=header_row_idx)
+                    df.columns = [clean_header(c) for c in df.columns]
+                    
+                    # Find GSTIN column again in normalized headers
+                    gstin_col = None
+                    for col in df.columns:
+                        if "gstin" in col and "supplier" in col:
+                            gstin_col = col
+                            break
+                    
+                    if not gstin_col:
+                         # Fallback to just "gstin" if strictly one column has it
+                         potential = [c for c in df.columns if "gstin" in c]
+                         if len(potential) == 1:
+                             gstin_col = potential[0]
+
+                    if gstin_col:
+                        raw_gstins = df[gstin_col].dropna().astype(str).unique()
+                        for g in raw_gstins:
+                            g = g.strip().upper()
+                            # Basic GSTIN validation: 15 chars, alphanumeric
+                            if len(g) == 15 and g.isalnum():
+                                all_gstins.add(g)
+            except Exception as e_sheet:
+                print(f"Error processing B2B sheet: {e_sheet}")
+
         except Exception as e:
             print(f"Error reading input file: {e}")
             continue

@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 from app.models.job import Job, JobStatus, JobType
+from app.models.models import User
 from app.services import storage 
 from app.services.gst import process_zip_bytes, generate_annexure_b
 
@@ -56,12 +57,31 @@ def run_worker():
                     if len(input_files) < 1:
                         raise ValueError("Statement 3 requires at least 1 input file (Shipping ZIP)")
                     
-                    # Download Input 1: Shipping Zip
-                    ship_zip_path = input_files[0]
-                    # Assume storage download returns path to temp file
-                    # But process_zip_bytes needs BYTES.
-                    # storage.download_to_temp returns a temp file path.
+                    # Intelligent File Assignment
+                    ship_zip_path = None
+                    brc_zip_path = None
                     
+                    remaining = []
+                    
+                    for path in input_files:
+                        lpath = path.lower()
+                        if "brc" in lpath or "realisation" in lpath:
+                            brc_zip_path = path
+                        elif "ship" in lpath or "sb" in lpath or "bill" in lpath:
+                            ship_zip_path = path
+                        else:
+                            remaining.append(path)
+                            
+                    # Fallback: Assign unclassified files
+                    if not ship_zip_path and remaining:
+                        ship_zip_path = remaining.pop(0) # Default first is Shipping
+                    if not brc_zip_path and remaining:
+                        brc_zip_path = remaining.pop(0) # Default second is BRC
+                        
+                    if not ship_zip_path:
+                         raise ValueError("Could not identify a Shipping Bill ZIP file.")
+
+                    # Download Input 1: Shipping Zip
                     temp_ship = storage.storage_service.download_to_temp(ship_zip_path)
                     if not temp_ship:
                         raise FileNotFoundError(f"Could not download {ship_zip_path}")
@@ -72,8 +92,7 @@ def run_worker():
                     
                     # Download Input 2: BRC Zip (Optional)
                     brc_bytes = None
-                    if len(input_files) > 1:
-                        brc_zip_path = input_files[1]
+                    if brc_zip_path:
                         temp_brc = storage.storage_service.download_to_temp(brc_zip_path)
                         if temp_brc:
                             with open(temp_brc, "rb") as f:

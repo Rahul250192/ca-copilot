@@ -20,9 +20,66 @@ def reconcile_gst(input_bytes_list: List[bytes]) -> bytes:
     
     for file_bytes in input_bytes_list:
         try:
-            # Read 'B2B' sheet
-            df = pd.read_excel(io.BytesIO(file_bytes), sheet_name="B2B")
+            xls = pd.ExcelFile(io.BytesIO(file_bytes))
             
+            # Find B2B sheet (case-insensitive)
+            b2b_sheet = next((s for s in xls.sheet_names if s.lower() == "b2b"), None)
+            
+            if not b2b_sheet:
+                print("Sheet 'B2B' not found in file. Skipping.")
+                continue
+
+            try:
+                # Scan first 20 rows for header in B2B sheet
+                df_scan = pd.read_excel(xls, sheet_name=b2b_sheet, header=None, nrows=20)
+                
+                header_row_idx = -1
+                for idx, row in df_scan.iterrows():
+                    row_vals = [str(v).lower().strip() for v in row.values]
+                    
+                    # Target: "GSTIN" and "Supplier" (standard) or "Taxable Value" (reconciliation specific)
+                    has_gstin = any("gstin" in v for v in row_vals)
+                    has_supplier = any("supplier" in v for v in row_vals)
+                    has_taxable = any("taxable" in v and "value" in v for v in row_vals)
+                    
+                    if (has_gstin and has_supplier) or (has_gstin and has_taxable):
+                        header_row_idx = idx
+                        break
+                
+                if header_row_idx == -1:
+                     # Fallback check
+                     for idx, row in df_scan.iterrows():
+                        row_vals = [str(v).lower().strip() for v in row.values]
+                        if any("gstin/uin of supplier" in v for v in row_vals):
+                             header_row_idx = idx
+                             break
+
+                if header_row_idx == -1:
+                    print("Could not find header row in B2B sheet.")
+                    continue
+
+                # Initial read
+                df = pd.read_excel(xls, sheet_name=b2b_sheet, header=header_row_idx)
+                
+                # Check for merged headers (Tax Amount present but sub-taxes missing)
+                cols_str = " ".join([str(c).lower() for c in df.columns])
+                if "tax amount" in cols_str and "integrated" not in cols_str:
+                    df = pd.read_excel(xls, sheet_name=b2b_sheet, header=[header_row_idx, header_row_idx+1])
+                    
+                    # Flatten headers
+                    new_cols = []
+                    for col in df.columns:
+                        # col is tuple
+                        # Filter out 'Unnamed' and 'nan'
+                        parts = [str(x).strip() for x in col if "unnamed" not in str(x).lower() and str(x).lower() != "nan"]
+                        new_cols.append(" ".join(parts).strip())
+                    
+                    df.columns = new_cols
+                
+            except Exception as e_sheet:
+                print(f"Error processing B2B sheet scan: {e_sheet}")
+                continue
+
             # Normalize headers
             df.columns = [clean_header(c) for c in df.columns]
             
@@ -47,6 +104,9 @@ def reconcile_gst(input_bytes_list: List[bytes]) -> bytes:
             if not col_map.get("gstin"):
                 # specific fallback for standard format
                 if "gstin of supplier" in df.columns: col_map["gstin"] = "gstin of supplier"
+                # fallback partial match
+                potential = [c for c in df.columns if "gstin" in c]
+                if len(potential) == 1: col_map["gstin"] = potential[0]
             
             if not col_map.get("gstin"):
                  print(f"Skipping file: Could not find GSTIN column in headers: {df.columns}")
@@ -60,8 +120,8 @@ def reconcile_gst(input_bytes_list: List[bytes]) -> bytes:
                 rename_dict[col_map["gstin"]] = "GSTIN"
                 keep_cols.append("GSTIN")
             if "name" in col_map: 
-                rename_dict[col_map["name"]] = "Trade Name"
-                keep_cols.append("Trade Name")
+                rename_dict[col_map["name"]] = "Trade/Legal Name"
+                keep_cols.append("Trade/Legal Name")
             
             # Numeric columns
             numeric_cols_map = {
@@ -77,8 +137,6 @@ def reconcile_gst(input_bytes_list: List[bytes]) -> bytes:
                     rename_dict[col_map[key]] = display_name
                     keep_cols.append(display_name)
                 else:
-                    # If missing, we will create it with 0 later? 
-                    # Better to just not include if not present, but for aggregation consistency we might need it.
                     pass
 
             # Filter and Rename
@@ -109,10 +167,9 @@ def reconcile_gst(input_bytes_list: List[bytes]) -> bytes:
         full_df[c] = pd.to_numeric(full_df[c], errors='coerce').fillna(0)
         
     # Aggregate
-    # Group by GSTIN. For Trade Name, we trigger 'first' (assuming consistent naming for same GSTIN)
     agg_rules = {c: 'sum' for c in existing_numeric}
-    if "Trade Name" in full_df.columns:
-        agg_rules["Trade Name"] = 'first'
+    if "Trade/Legal Name" in full_df.columns:
+        agg_rules["Trade/Legal Name"] = 'first'
         
     result_df = full_df.groupby("GSTIN", as_index=False).agg(agg_rules)
     
@@ -122,6 +179,12 @@ def reconcile_gst(input_bytes_list: List[bytes]) -> bytes:
         if c in result_df.columns:
             result_df["Total Tax"] += result_df[c]
             
+    # Reorder Columns strictly
+    desired_order = ["GSTIN", "Trade/Legal Name", "Taxable Value", "Integrated Tax", "Central Tax", "State/UT Tax", "Cess", "Total Tax"]
+    # Only keep columns that actually exist in result_df
+    final_cols = [c for c in desired_order if c in result_df.columns]
+    result_df = result_df[final_cols]
+
     # Format Output
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:

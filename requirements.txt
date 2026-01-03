@@ -30,3 +30,4 @@ openpyxl
 xlsxwriter
 fuzzywuzzy
 python-levenshtein
+requests
