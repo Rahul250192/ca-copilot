@@ -167,3 +167,4 @@ storage/
 .DS_Store
 
 google-credentials.json
+uploads/

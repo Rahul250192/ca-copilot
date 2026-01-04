@@ -43,7 +43,12 @@ class GoogleDriveService:
     def _find_or_create_folder(self, folder_name: str, parent_id: str) -> Optional[str]:
         query = f"name = '{folder_name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         try:
-            results = self.service.files().list(q=query, fields="files(id)").execute()
+            results = self.service.files().list(
+                q=query, 
+                fields="files(id)",
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True
+            ).execute()
             items = results.get('files', [])
             if items:
                 return items[0]['id']
@@ -54,7 +59,11 @@ class GoogleDriveService:
                 'mimeType': 'application/vnd.google-apps.folder',
                 'parents': [parent_id]
             }
-            folder = self.service.files().create(body=file_metadata, fields='id').execute()
+            folder = self.service.files().create(
+                body=file_metadata, 
+                fields='id',
+                supportsAllDrives=True
+            ).execute()
             return folder.get('id')
         except Exception as e:
             print(f"Drive Folder Error: {e}")
@@ -95,7 +104,8 @@ class GoogleDriveService:
             file = self.service.files().create(
                 body=file_metadata,
                 media_body=media,
-                fields='id, webViewLink'
+                fields='id, webViewLink',
+                supportsAllDrives=True
             ).execute()
             
             # Return the Drive File ID 
