@@ -7,6 +7,7 @@ from app.core.config import settings
 # --- Google Drive Dependencies ---
 try:
     from google.oauth2 import service_account
+    from google.oauth2.credentials import Credentials # Added for User Auth
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseUpload
     GOOGLE_AVAILABLE = True
@@ -28,17 +29,31 @@ class GoogleDriveService:
         self.service = None
         self.folder_id = settings.GOOGLE_DRIVE_FOLDER_ID
         
-        if GOOGLE_AVAILABLE and settings.GOOGLE_CREDENTIALS_PATH and os.path.exists(settings.GOOGLE_CREDENTIALS_PATH):
-            try:
-                creds = service_account.Credentials.from_service_account_file(
-                    settings.GOOGLE_CREDENTIALS_PATH, 
-                    scopes=['https://www.googleapis.com/auth/drive']
-                )
-                self.service = build('drive', 'v3', credentials=creds)
-                self.enabled = True
-                print("✅ Google Drive Service Initialized")
-            except Exception as e:
-                print(f"❌ Failed to init Google Drive: {e}")
+        if GOOGLE_AVAILABLE:
+            # 1. Try User Credentials (token.json) - For Personal Accounts
+            token_path = os.getenv("GOOGLE_TOKEN_PATH", "token.json")
+            if os.path.exists(token_path):
+                try:
+                    creds = Credentials.from_authorized_user_file(token_path, ['https://www.googleapis.com/auth/drive'])
+                    self.service = build('drive', 'v3', credentials=creds)
+                    self.enabled = True
+                    print(f"✅ Google Drive Initialized with User Credentials ({token_path})")
+                    return
+                except Exception as e:
+                     print(f"⚠️ Failed to init User Creds: {e}")
+
+            # 2. Try Service Account (google-credentials.json)
+            if settings.GOOGLE_CREDENTIALS_PATH and os.path.exists(settings.GOOGLE_CREDENTIALS_PATH):
+                try:
+                    creds = service_account.Credentials.from_service_account_file(
+                        settings.GOOGLE_CREDENTIALS_PATH, 
+                        scopes=['https://www.googleapis.com/auth/drive']
+                    )
+                    self.service = build('drive', 'v3', credentials=creds)
+                    self.enabled = True
+                    print("✅ Google Drive Service Initialized (Service Account)")
+                except Exception as e:
+                    print(f"❌ Failed to init Google Drive SA: {e}")
 
     def _find_or_create_folder(self, folder_name: str, parent_id: str) -> Optional[str]:
         query = f"name = '{folder_name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
