@@ -22,3 +22,29 @@ services:
       - key: APP_RELOAD
         value: "false"
     autoDeploy: true
+
+  - type: worker
+    name: ca-copilot-worker
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerCommand: "python apps/api/app/worker/main.py"
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: "knowledge-kits"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: GOOGLE_TOKEN_PATH
+        sync: false
+      - key: GOOGLE_CREDENTIALS_PATH
+        sync: false
+      - key: STORAGE_PROVIDER
+        sync: false
