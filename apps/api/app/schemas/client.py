@@ -38,4 +38,9 @@ class Client(ClientInDBBase):
         data = serializer(self)
         # Add client_id as a computed field
         data['client_id'] = f"CLT-{str(self.id)[:8].upper()}"
+        # Explicitly ensure pan/cin are included (debugging missing fields)
+        if self.pan:
+            data['pan'] = self.pan
+        if self.cin:
+            data['cin'] = self.cin
         return data

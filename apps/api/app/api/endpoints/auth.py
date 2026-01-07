@@ -73,6 +73,7 @@ async def signup(
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    user.firm_name = firm.name
     return user
 
 @router.get("/me", response_model=user_schemas.User)
@@ -82,6 +83,8 @@ async def read_users_me(
     """
     Get current user.
     """
+    if current_user.firm:
+        current_user.firm_name = current_user.firm.name
     return current_user
 
 @router.put("/me", response_model=user_schemas.User)
@@ -94,6 +97,26 @@ async def update_user_me(
     """
     Update own profile.
     """
+    if user_in.full_name is not None:
+        current_user.full_name = user_in.full_name
+        
+    if user_in.email is not None and user_in.email != current_user.email:
+        # Check uniqueness
+        result = await db.execute(select(User).where(User.email == user_in.email))
+        existing_user = result.scalars().first()
+        if existing_user:
+             raise HTTPException(status_code=400, detail="Email already taken")
+        current_user.email = user_in.email
+        
+    if user_in.firm_name is not None:
+        # Update linked firm
+        # We need to fetch the firm first if not loaded, but typically we can just get by ID
+        result = await db.execute(select(Firm).where(Firm.id == current_user.firm_id))
+        firm = result.scalars().first()
+        if firm:
+            firm.name = user_in.firm_name
+            db.add(firm)
+
     if user_in.phone_number is not None:
         current_user.phone_number = user_in.phone_number
     if user_in.job_title is not None:
@@ -104,4 +127,8 @@ async def update_user_me(
     db.add(current_user)
     await db.commit()
     await db.refresh(current_user)
+    
+    if current_user.firm:
+        current_user.firm_name = current_user.firm.name
+        
     return current_user
