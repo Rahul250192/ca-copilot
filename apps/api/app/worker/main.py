@@ -248,7 +248,15 @@ def run_worker():
                 logger.error(f"Job {job.id} FAILED: {e}")
                 traceback.print_exc()
                 job.status = JobStatus.FAILED
-                # Ideally store error message in db (e.g. metadata or events)
+                
+                # Store error message in JobEvent for debugging
+                from app.models.job import JobEvent
+                error_event = JobEvent(
+                    job_id=job.id,
+                    level="ERROR",
+                    message=str(e)
+                )
+                db.add(error_event)
                 db.commit()
                 
         except Exception as e:

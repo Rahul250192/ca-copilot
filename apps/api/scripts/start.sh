@@ -14,7 +14,7 @@ python scripts/seed_data.py
 
 # 3. Start Background Worker (Free Tier Optimization)
 echo "👷 Starting Background Worker..."
-python apps/api/app/worker/main.py &
+python /app/apps/api/app/worker/main.py &
 
 # 4. Start application
 echo "📡 Launching Uvicorn..."
