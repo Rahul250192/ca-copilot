@@ -31,3 +31,4 @@ xlsxwriter
 fuzzywuzzy
 python-levenshtein
 requests
+pytesseract

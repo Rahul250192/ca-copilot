@@ -13,6 +13,7 @@ from app.models.job import Job, JobStatus, JobType
 from app.models.models import User
 from app.services import storage 
 from app.services.gst import process_zip_bytes, generate_annexure_b
+from app.services.gst.extract_firc_details import process_statement3_workflow
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s - %(message)s")
@@ -111,6 +112,59 @@ def run_worker():
                     output_key = f"Reports/{job.firm_id}/{client_folder}/Statement3_{timestamp}.xlsx"
                     
                     # storage.upload_file expects bytes
+                    storage.storage_service.upload_file(
+                        result_bytes, 
+                        output_key, 
+                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    output_files.append(output_key)
+
+                elif job.job_type == JobType.STATEMENT3_FIRC:
+                    if len(input_files) < 2:
+                        raise ValueError("Statement 3 (FIRC) requires 2 input files (Invoice ZIP and FIRC ZIP)")
+                    
+                    inv_path = None
+                    firc_path = None
+                    
+                    # File Identification
+                    # Strategy: Look for "invoice" in name, "firc" in name.
+                    remaining = []
+                    for p in input_files:
+                        lp = p.lower()
+                        if "invoice" in lp:
+                            inv_path = p
+                        elif "firc" in lp:
+                            firc_path = p
+                        else:
+                            remaining.append(p)
+                            
+                    # Fallback: Assign remaining
+                    if not inv_path and remaining: inv_path = remaining.pop(0)
+                    if not firc_path and remaining: firc_path = remaining.pop(0)
+                    
+                    if not inv_path or not firc_path:
+                        raise ValueError("Could not identify Invoice and FIRC ZIP files.")
+                        
+                    # Download
+                    temp_inv = storage.storage_service.download_to_temp(inv_path)
+                    if not temp_inv: raise FileNotFoundError(f"Missing {inv_path}")
+                    with open(temp_inv, "rb") as f: inv_bytes = f.read()
+                    os.unlink(temp_inv)
+                    
+                    temp_firc = storage.storage_service.download_to_temp(firc_path)
+                    if not temp_firc: raise FileNotFoundError(f"Missing {firc_path}")
+                    with open(temp_firc, "rb") as f: firc_bytes = f.read()
+                    os.unlink(temp_firc)
+                    
+                    # Execute
+                    result_bytes = process_statement3_workflow(inv_bytes, firc_bytes)
+                    
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    
+                    client_folder = job.client_id if job.client_id else "General"
+                    output_key = f"Reports/{job.firm_id}/{client_folder}/New_Statement_{timestamp}.xlsx"
+                    
                     storage.storage_service.upload_file(
                         result_bytes, 
                         output_key, 

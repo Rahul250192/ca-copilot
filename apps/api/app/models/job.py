@@ -15,6 +15,7 @@ class JobStatus(str, enum.Enum):
 
 class JobType(str, enum.Enum):
     STATEMENT3 = "statement3"
+    STATEMENT3_FIRC = "statement3_firc"
     ANNEXURE_B = "annexure_b"
     GST_VERIFY = "gst_verify"
     GST_RECON = "gst_recon"
