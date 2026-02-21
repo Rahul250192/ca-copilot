@@ -22,6 +22,14 @@ class JobType(str, enum.Enum):
     DOCUMENT_READER = "document_reader"
     AI_BLOCK_CREDIT = "ai_block_credit"
     HSN_PLOTTER = "hsn_plotter"
+    IMS_VS_PR = "ims_vs_pr"
+    GSTR2B_VS_PR = "gstr2b_vs_pr"
+    GSTR2B_VS_3B = "gstr2b_vs_3b"
+    EINV_VS_SR = "einv_vs_sr"
+    GSTR1_VS_EINV = "gstr1_vs_einv"
+    GSTR1_VS_3B = "gstr1_vs_3b"
+    ARN_STATUS = "arn_status"
+    GSTR9_JSON = "gstr9_json"
 
 class Job(Base):
     __tablename__ = "jobs"

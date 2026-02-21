@@ -399,8 +399,48 @@ def run_worker():
                         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                     output_files.append(output_key)
-                
-                else:
+                elif job.job_type in [
+                    JobType.IMS_VS_PR, JobType.GSTR2B_VS_PR, JobType.GSTR2B_VS_3B,
+                    JobType.EINV_VS_SR, JobType.GSTR1_VS_EINV, JobType.GSTR1_VS_3B
+                ]:
+                    from app.services.gst.reconciliation import process_reconciliation_job
+                    import asyncio
+                    
+                    if len(input_files) < 2:
+                        raise ValueError(f"{job.job_type} requires at least 2 input files")
+                        
+                    # Download all files
+                    input_bytes_list = []
+                    filenames = []
+                    for path in input_files:
+                        temp_path = storage.storage_service.download_to_temp(path)
+                        if temp_path:
+                            filenames.append(os.path.basename(path))
+                            with open(temp_path, "rb") as f:
+                                input_bytes_list.append(f.read())
+                            os.unlink(temp_path)
+                            
+                    if len(input_bytes_list) < 2:
+                         raise ValueError("Failed to download required input files")
+                    
+                    # Execute (Async)
+                    result_bytes = asyncio.get_event_loop().run_until_complete(
+                        process_reconciliation_job(input_bytes_list, filenames, job.job_type)
+                    )
+                    
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    
+                    client_folder = job.client_id if job.client_id else "General"
+                    report_name = job.job_type.upper().replace("_", " ")
+                    output_key = f"Reports/{job.firm_id}/{client_folder}/{report_name}_{timestamp}.xlsx"
+                    
+                    storage.storage_service.upload_file(
+                        result_bytes, 
+                        output_key, 
+                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    output_files.append(output_key)
                     raise NotImplementedError(f"Job Type {job.job_type} not implemented yet")
 
                 # Success
