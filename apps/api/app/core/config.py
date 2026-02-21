@@ -41,10 +41,11 @@ class Settings(BaseSettings):
             elif v.startswith("postgresql://") and "+asyncpg" not in v:
                 v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
             
-            # Strip pgbouncer parameter as asyncpg doesn't support it directly in string
-            if "pgbouncer=true" in v:
-                v = v.replace("?pgbouncer=true", "")
-                v = v.replace("&pgbouncer=true", "")
+            # asyncpg doesn't support these as query parameters in the connection string
+            # We handle SSL and pooling explicitly in our engine configuration
+            for param in ["pgbouncer=true", "pgbouncer=false", "sslmode=require", "sslmode=disable", "sslmode=prefer"]:
+                v = v.replace(f"?{param}", "")
+                v = v.replace(f"&{param}", "")
                 
         return v
 

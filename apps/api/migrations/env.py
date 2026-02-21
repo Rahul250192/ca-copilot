@@ -104,4 +104,10 @@ async def run_migrations_online() -> None:
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    asyncio.run(run_migrations_online())
+    try:
+        asyncio.run(run_migrations_online())
+    except Exception as e:
+        import traceback
+        print(f"❌ MIGRATION FAILED: {e}")
+        traceback.print_exc()
+        raise e
