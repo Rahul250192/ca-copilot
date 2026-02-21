@@ -72,13 +72,27 @@ async def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    import ssl
+    is_local = "localhost" in settings.DATABASE_URL or "127.0.0.1" in settings.DATABASE_URL
+    
+    connect_args = {
+        "command_timeout": 60,
+        "statement_cache_size": 0,
+    }
+    
+    if not is_local:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        connect_args["ssl"] = ctx
+    else:
+        connect_args["ssl"] = False
+
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        connect_args={
-            "statement_cache_size": 0,
-        },
+        connect_args=connect_args,
     )
 
     async with connectable.connect() as connection:

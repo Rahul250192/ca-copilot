@@ -41,10 +41,11 @@ class Settings(BaseSettings):
             elif v.startswith("postgresql://") and "+asyncpg" not in v:
                 v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
             
-            # Strip pgbouncer parameter as asyncpg doesn't support it
+            # Strip pgbouncer parameter as asyncpg doesn't support it directly in string
             if "pgbouncer=true" in v:
                 v = v.replace("?pgbouncer=true", "")
                 v = v.replace("&pgbouncer=true", "")
+                
         return v
 
     @validator("BACKEND_CORS_ORIGINS", pre=True)
