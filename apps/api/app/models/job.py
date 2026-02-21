@@ -19,6 +19,9 @@ class JobType(str, enum.Enum):
     ANNEXURE_B = "annexure_b"
     GST_VERIFY = "gst_verify"
     GST_RECON = "gst_recon"
+    DOCUMENT_READER = "document_reader"
+    AI_BLOCK_CREDIT = "ai_block_credit"
+    HSN_PLOTTER = "hsn_plotter"
 
 class Job(Base):
     __tablename__ = "jobs"

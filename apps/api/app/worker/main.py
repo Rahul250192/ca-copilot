@@ -176,7 +176,6 @@ def run_worker():
                     if len(input_files) < 1:
                         raise ValueError("Annexure B requires at least 1 input file (GSTR2B Excel)")
                     
-                    # Supports multiple files
                     input_bytes_list = []
                     for path in input_files:
                         temp_path = storage.storage_service.download_to_temp(path)
@@ -188,9 +187,6 @@ def run_worker():
                     if not input_bytes_list:
                          raise ValueError("No valid input files downloaded")
 
-                    # We need access to the assets dir for base_dir
-                    # The assets are in apps/api/app/services/gst/
-                    # We can derive it from the imported module
                     import app.services.gst.annexure_b_generator as gen_mod
                     base_dir = os.path.dirname(gen_mod.__file__)
                     
@@ -202,13 +198,6 @@ def run_worker():
                     client_folder = job.client_id if job.client_id else "General"
                     output_key = f"Reports/{job.firm_id}/{client_folder}/AnnexureB_{timestamp}.xlsx"
                     
-                    storage.storage_service.upload_file(
-                        result_bytes, 
-                        output_key, 
-                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    output_files.append(output_key)
-                
                     storage.storage_service.upload_file(
                         result_bytes, 
                         output_key, 
@@ -281,6 +270,128 @@ def run_worker():
                     
                     client_folder = job.client_id if job.client_id else "General"
                     output_key = f"Reports/{job.firm_id}/{client_folder}/GST_Reconciliation_{timestamp}.xlsx"
+                    
+                    storage.storage_service.upload_file(
+                        result_bytes, 
+                        output_key, 
+                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    output_files.append(output_key)
+
+                elif job.job_type == JobType.DOCUMENT_READER:
+                    from app.services.gst.reader import process_document_reader_job
+                    import asyncio
+                    
+                    if len(input_files) < 1:
+                        raise ValueError("Document Reader requires at least 1 input file")
+                        
+                    # Download all files
+                    input_bytes_list = []
+                    filenames = []
+                    for path in input_files:
+                        temp_path = storage.storage_service.download_to_temp(path)
+                        if temp_path:
+                            filenames.append(os.path.basename(path))
+                            with open(temp_path, "rb") as f:
+                                input_bytes_list.append(f.read())
+                            os.unlink(temp_path)
+                            
+                    if not input_bytes_list:
+                         raise ValueError("No valid input files downloaded")
+                    
+                    # Get document type from metadata
+                    doc_type = "invoice"
+                    if job.metadata and isinstance(job.metadata, dict):
+                        doc_type = job.metadata.get("document_type", "invoice")
+                    
+                    # Execute (Async)
+                    result_bytes = asyncio.get_event_loop().run_until_complete(
+                        process_document_reader_job(input_bytes_list, filenames, doc_type)
+                    )
+                    
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    
+                    client_folder = job.client_id if job.client_id else "General"
+                    output_key = f"Reports/{job.firm_id}/{client_folder}/Extracted_{doc_type}_{timestamp}.xlsx"
+                    
+                    storage.storage_service.upload_file(
+                        result_bytes, 
+                        output_key, 
+                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    output_files.append(output_key)
+
+                elif job.job_type == JobType.AI_BLOCK_CREDIT:
+                    from app.services.gst.block_credit import process_block_credit_job
+                    import asyncio
+                    
+                    if len(input_files) < 1:
+                        raise ValueError("AI Block Credit requires at least 1 input file (Purchase Register)")
+                        
+                    # Download all files
+                    input_bytes_list = []
+                    filenames = []
+                    for path in input_files:
+                        temp_path = storage.storage_service.download_to_temp(path)
+                        if temp_path:
+                            filenames.append(os.path.basename(path))
+                            with open(temp_path, "rb") as f:
+                                input_bytes_list.append(f.read())
+                            os.unlink(temp_path)
+                            
+                    if not input_bytes_list:
+                         raise ValueError("No valid input files downloaded")
+                    
+                    # Execute (Async)
+                    result_bytes = asyncio.get_event_loop().run_until_complete(
+                        process_block_credit_job(input_bytes_list, filenames)
+                    )
+                    
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    
+                    client_folder = job.client_id if job.client_id else "General"
+                    output_key = f"Reports/{job.firm_id}/{client_folder}/Blocked_Credit_Report_{timestamp}.xlsx"
+                    
+                    storage.storage_service.upload_file(
+                        result_bytes, 
+                        output_key, 
+                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    output_files.append(output_key)
+
+                elif job.job_type == JobType.HSN_PLOTTER:
+                    from app.services.gst.hsn_plotter import process_hsn_plotter_job
+                    import asyncio
+                    
+                    if len(input_files) < 1:
+                        raise ValueError("HSN Plotter requires at least 1 input file (PR or SR)")
+                        
+                    # Download all files
+                    input_bytes_list = []
+                    filenames = []
+                    for path in input_files:
+                        temp_path = storage.storage_service.download_to_temp(path)
+                        if temp_path:
+                            filenames.append(os.path.basename(path))
+                            with open(temp_path, "rb") as f:
+                                input_bytes_list.append(f.read())
+                            os.unlink(temp_path)
+                            
+                    if not input_bytes_list:
+                         raise ValueError("No valid input files downloaded")
+                    
+                    # Execute (Async)
+                    result_bytes = asyncio.get_event_loop().run_until_complete(
+                        process_hsn_plotter_job(input_bytes_list, filenames)
+                    )
+                    
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    
+                    client_folder = job.client_id if job.client_id else "General"
+                    output_key = f"Reports/{job.firm_id}/{client_folder}/HSN_Plotting_Report_{timestamp}.xlsx"
                     
                     storage.storage_service.upload_file(
                         result_bytes, 
