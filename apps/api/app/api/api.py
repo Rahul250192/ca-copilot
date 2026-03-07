@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.endpoints import auth, clients, kits, documents, conversations, services, jobs, tools
+from app.api.endpoints import auth, clients, kits, documents, conversations, services, jobs, tools, agreements, hsn_lookup, invoices, vouchers, tally
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -11,3 +11,8 @@ api_router.include_router(documents.router, prefix="/documents", tags=["document
 api_router.include_router(conversations.router, prefix="/conversations", tags=["conversations"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 api_router.include_router(tools.router, prefix="/tools", tags=["tools"])
+api_router.include_router(agreements.router, prefix="/agreements", tags=["agreements"])
+api_router.include_router(hsn_lookup.router, prefix="/hsn", tags=["hsn"])
+api_router.include_router(invoices.router, prefix="/invoices", tags=["invoices"])
+api_router.include_router(vouchers.router, prefix="/vouchers", tags=["vouchers"])
+api_router.include_router(tally.router, prefix="/tally", tags=["tally"])

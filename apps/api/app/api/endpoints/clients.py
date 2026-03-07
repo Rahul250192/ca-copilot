@@ -71,7 +71,9 @@ async def read_clients(
         Client.firm_id == current_user.firm_id
     ).offset(skip).limit(limit)
     result = await db.execute(query)
-    return result.scalars().all()
+    clients_retrieved = result.scalars().all()
+    print(f"DEBUG read_clients: User={current_user.email}, Firm={current_user.firm_id}, Returned={len(clients_retrieved)}")
+    return clients_retrieved
 
 @router.post("/", response_model=client_schemas.Client)
 async def create_client(
@@ -85,6 +87,7 @@ async def create_client(
     """
     client = Client(
         name=client_in.name,
+        email=client_in.email,
         gstins=client_in.gstins,
         pan=client_in.pan,
         cin=client_in.cin,

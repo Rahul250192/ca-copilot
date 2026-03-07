@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     GOOGLE_CREDENTIALS_PATH: str = "google-credentials.json"
     GOOGLE_DRIVE_FOLDER_ID: Optional[str] = None
     
+    # Google OAuth (for Google Sign-In)
+    GOOGLE_OAUTH_CLIENT_ID: Optional[str] = None
+
     # GST Services
     APPYFLOW_API_KEY: Optional[str] = None
 

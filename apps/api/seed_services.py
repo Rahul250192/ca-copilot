@@ -15,6 +15,8 @@ SERVICES_TO_ADD = [
     {"name": "Payroll", "description": "Payroll processing and PF/ESI compliance"},
     {"name": "Company Law", "description": "ROC filings and company law matters"},
     {"name": "Accounting", "description": "Professional bookkeeping and accounting services"},
+    {"name": "CA Certificates", "description": "Generate CA certificates for your clients with ease"},
+    {"name": "Data Entry", "description": "Quick entry of banking, sales, purchase, journal, ledger and item transactions for seamless compliance."},
 ]
 
 async def seed_services():

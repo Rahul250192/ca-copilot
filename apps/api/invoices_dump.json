@@ -1,0 +1,16 @@
+[
+  {
+    "id": 1,
+    "vendor_name": "DREAMHII TECHNOLOGIES",
+    "gst_number": "07COBPS3588C1ZS",
+    "invoice_number": "25-26-033",
+    "invoice_date": "2025-10-06T00:00:00",
+    "currency": "USD",
+    "amount": "$5,750.00",
+    "gst_amount": null,
+    "total_amount": "$5,750.00",
+    "expenses_type": null,
+    "source": "email",
+    "received_at": "2026-02-26T13:18:57.066000"
+  }
+]
