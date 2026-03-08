@@ -210,6 +210,7 @@ class GetInvoice(Base):
     client_email_id = Column(String(255), nullable=True)
     file_path = Column(String(1000), nullable=True) # Storage path or URL to the original document
     received_at = Column(DateTime, server_default=sa.text('CURRENT_TIMESTAMP'))
+    synced_to_tally = Column(Boolean, default=False)
 
 class AccountingVoucher(Base):
     __tablename__ = "accounting_vouchers"

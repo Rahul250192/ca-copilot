@@ -176,3 +176,17 @@ async def voucher_stats(
         type_counts[vtype.lower()] = c
 
     return {"total": total, **type_counts}
+
+
+# ──────────────────────────────────────────
+# COMPANIES  (distinct company names from synced ledgers)
+# ──────────────────────────────────────────
+@router.get("/companies")
+async def list_companies(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Return distinct Tally company names from synced ledgers."""
+    q = select(func.distinct(Ledger.company_name)).order_by(Ledger.company_name)
+    result = await db.execute(q)
+    return [row[0] for row in result if row[0]]

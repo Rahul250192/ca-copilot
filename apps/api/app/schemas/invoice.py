@@ -14,12 +14,14 @@ class InvoiceBase(BaseModel):
     expenses_type: Optional[str] = None
     source: str
     client_email_id: Optional[str] = None
+    synced_to_tally: Optional[bool] = False
 
 class InvoiceCreate(InvoiceBase):
     pass
 
 class InvoiceUpdate(BaseModel):
     expenses_type: Optional[str] = None
+    synced_to_tally: Optional[bool] = None
 
 class InvoiceInDBBase(InvoiceBase):
     id: int
