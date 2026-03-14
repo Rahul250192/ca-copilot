@@ -70,7 +70,7 @@ async def get_remote_template_preview(
 
     try:
         from app.services.agreement_pdf import docx_to_preview_html
-        html = docx_to_preview_html(template_data)
+        html = docx_to_preview_html(template_data, blank_map={})
         return {"html": html}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating preview: {str(e)}")

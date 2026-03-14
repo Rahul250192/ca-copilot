@@ -14,6 +14,7 @@ from app.models.models import User
 from app.services import storage 
 from app.services.gst import process_zip_bytes, generate_annexure_b
 from app.services.gst.extract_firc_details import process_statement3_workflow
+from app.services.drive_saver import save_report_to_drive_sync
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s - %(message)s")
@@ -51,6 +52,7 @@ def run_worker():
             
             input_files = job.input_files or []
             output_files = []
+            last_result_bytes = None  # Track output bytes for drive save
             
             try:
                 # Dispatch Logic
@@ -106,10 +108,9 @@ def run_worker():
                     from datetime import datetime
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
-                    # Upload Output - Hierarchical Structure
-                    # Reports / <Firm ID> / <Client ID or 'General'> / Statement3_<Date>.xlsx
-                    client_folder = job.client_id if job.client_id else "General"
-                    output_key = f"Reports/{job.firm_id}/{client_folder}/Statement3_{timestamp}.xlsx"
+                    # Upload Output - Hierarchical: <firm>/<client>/<tool>/<file>
+                    client_folder = str(job.client_id) if job.client_id else "General"
+                    output_key = f"{job.firm_id}/{client_folder}/statement3/Statement3_{timestamp}.xlsx"
                     
                     # storage.upload_file expects bytes
                     storage.storage_service.upload_file(
@@ -118,6 +119,7 @@ def run_worker():
                         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                     output_files.append(output_key)
+                    last_result_bytes = result_bytes
 
                 elif job.job_type == JobType.STATEMENT3_FIRC:
                     if len(input_files) < 2:
@@ -162,8 +164,8 @@ def run_worker():
                     from datetime import datetime
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
-                    client_folder = job.client_id if job.client_id else "General"
-                    output_key = f"Reports/{job.firm_id}/{client_folder}/New_Statement_{timestamp}.xlsx"
+                    client_folder = str(job.client_id) if job.client_id else "General"
+                    output_key = f"{job.firm_id}/{client_folder}/statement3_firc/Statement3_FIRC_{timestamp}.xlsx"
                     
                     storage.storage_service.upload_file(
                         result_bytes, 
@@ -171,6 +173,7 @@ def run_worker():
                         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                     output_files.append(output_key)
+                    last_result_bytes = result_bytes
 
                 elif job.job_type == JobType.ANNEXURE_B:
                     if len(input_files) < 1:
@@ -195,8 +198,8 @@ def run_worker():
                     from datetime import datetime
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
-                    client_folder = job.client_id if job.client_id else "General"
-                    output_key = f"Reports/{job.firm_id}/{client_folder}/AnnexureB_{timestamp}.xlsx"
+                    client_folder = str(job.client_id) if job.client_id else "General"
+                    output_key = f"{job.firm_id}/{client_folder}/annexure_b/AnnexureB_{timestamp}.xlsx"
                     
                     storage.storage_service.upload_file(
                         result_bytes, 
@@ -204,6 +207,7 @@ def run_worker():
                         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                     output_files.append(output_key)
+                    last_result_bytes = result_bytes
 
                 elif job.job_type == JobType.GST_VERIFY:
                     from app.services.gst import verify_gstins
@@ -229,8 +233,8 @@ def run_worker():
                     from datetime import datetime
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
-                    client_folder = job.client_id if job.client_id else "General"
-                    output_key = f"Reports/{job.firm_id}/{client_folder}/GST_Verify_{timestamp}.xlsx"
+                    client_folder = str(job.client_id) if job.client_id else "General"
+                    output_key = f"{job.firm_id}/{client_folder}/gst_verify/GST_Verify_{timestamp}.xlsx"
                     
                     storage.storage_service.upload_file(
                         result_bytes, 
@@ -238,13 +242,7 @@ def run_worker():
                         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                     output_files.append(output_key)
-                
-                    storage.storage_service.upload_file(
-                        result_bytes, 
-                        output_key, 
-                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    output_files.append(output_key)
+                    last_result_bytes = result_bytes
 
                 elif job.job_type == JobType.GST_RECON:
                     from app.services.gst import reconcile_gst
@@ -268,8 +266,8 @@ def run_worker():
                     from datetime import datetime
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
-                    client_folder = job.client_id if job.client_id else "General"
-                    output_key = f"Reports/{job.firm_id}/{client_folder}/GST_Reconciliation_{timestamp}.xlsx"
+                    client_folder = str(job.client_id) if job.client_id else "General"
+                    output_key = f"{job.firm_id}/{client_folder}/gst_recon/GST_Reconciliation_{timestamp}.xlsx"
                     
                     storage.storage_service.upload_file(
                         result_bytes, 
@@ -277,6 +275,7 @@ def run_worker():
                         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                     output_files.append(output_key)
+                    last_result_bytes = result_bytes
 
                 elif job.job_type == JobType.DOCUMENT_READER:
                     from app.services.gst.reader import process_document_reader_job
@@ -301,8 +300,8 @@ def run_worker():
                     
                     # Get document type from metadata
                     doc_type = "invoice"
-                    if job.metadata and isinstance(job.metadata, dict):
-                        doc_type = job.metadata.get("document_type", "invoice")
+                    if job.meta and isinstance(job.meta, dict):
+                        doc_type = job.meta.get("document_type", "invoice")
                     
                     # Execute (Async)
                     result_bytes = asyncio.get_event_loop().run_until_complete(
@@ -312,8 +311,8 @@ def run_worker():
                     from datetime import datetime
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
-                    client_folder = job.client_id if job.client_id else "General"
-                    output_key = f"Reports/{job.firm_id}/{client_folder}/Extracted_{doc_type}_{timestamp}.xlsx"
+                    client_folder = str(job.client_id) if job.client_id else "General"
+                    output_key = f"{job.firm_id}/{client_folder}/document_reader/Extracted_{doc_type}_{timestamp}.xlsx"
                     
                     storage.storage_service.upload_file(
                         result_bytes, 
@@ -321,6 +320,7 @@ def run_worker():
                         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                     output_files.append(output_key)
+                    last_result_bytes = result_bytes
 
                 elif job.job_type == JobType.AI_BLOCK_CREDIT:
                     from app.services.gst.block_credit import process_block_credit_job
@@ -351,8 +351,8 @@ def run_worker():
                     from datetime import datetime
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
-                    client_folder = job.client_id if job.client_id else "General"
-                    output_key = f"Reports/{job.firm_id}/{client_folder}/Blocked_Credit_Report_{timestamp}.xlsx"
+                    client_folder = str(job.client_id) if job.client_id else "General"
+                    output_key = f"{job.firm_id}/{client_folder}/ai_block_credit/Blocked_Credit_Report_{timestamp}.xlsx"
                     
                     storage.storage_service.upload_file(
                         result_bytes, 
@@ -360,6 +360,7 @@ def run_worker():
                         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                     output_files.append(output_key)
+                    last_result_bytes = result_bytes
 
                 elif job.job_type == JobType.HSN_PLOTTER:
                     from app.services.gst.hsn_plotter import process_hsn_plotter_job
@@ -390,8 +391,8 @@ def run_worker():
                     from datetime import datetime
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
-                    client_folder = job.client_id if job.client_id else "General"
-                    output_key = f"Reports/{job.firm_id}/{client_folder}/HSN_Plotting_Report_{timestamp}.xlsx"
+                    client_folder = str(job.client_id) if job.client_id else "General"
+                    output_key = f"{job.firm_id}/{client_folder}/hsn_plotter/HSN_Plotting_Report_{timestamp}.xlsx"
                     
                     storage.storage_service.upload_file(
                         result_bytes, 
@@ -399,12 +400,12 @@ def run_worker():
                         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                     output_files.append(output_key)
+                    last_result_bytes = result_bytes
                 elif job.job_type in [
                     JobType.IMS_VS_PR, JobType.GSTR2B_VS_PR, JobType.GSTR2B_VS_3B,
                     JobType.EINV_VS_SR, JobType.GSTR1_VS_EINV, JobType.GSTR1_VS_3B
                 ]:
-                    from app.services.gst.reconciliation import process_reconciliation_job
-                    import asyncio
+                    from app.services.gst.reconciliation import reconcile_gst
                     
                     if len(input_files) < 2:
                         raise ValueError(f"{job.job_type} requires at least 2 input files")
@@ -423,17 +424,16 @@ def run_worker():
                     if len(input_bytes_list) < 2:
                          raise ValueError("Failed to download required input files")
                     
-                    # Execute (Async)
-                    result_bytes = asyncio.get_event_loop().run_until_complete(
-                        process_reconciliation_job(input_bytes_list, filenames, job.job_type)
-                    )
+                    # Execute (Synchronous)
+                    result_bytes = reconcile_gst(input_bytes_list, filenames, job.job_type)
                     
                     from datetime import datetime
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
-                    client_folder = job.client_id if job.client_id else "General"
+                    client_folder = str(job.client_id) if job.client_id else "General"
                     report_name = job.job_type.upper().replace("_", " ")
-                    output_key = f"Reports/{job.firm_id}/{client_folder}/{report_name}_{timestamp}.xlsx"
+                    tool_key = job.job_type.lower().replace(" ", "_")
+                    output_key = f"{job.firm_id}/{client_folder}/{tool_key}/{report_name}_{timestamp}.xlsx"
                     
                     storage.storage_service.upload_file(
                         result_bytes, 
@@ -441,11 +441,25 @@ def run_worker():
                         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                     output_files.append(output_key)
-                    raise NotImplementedError(f"Job Type {job.job_type} not implemented yet")
+                    last_result_bytes = result_bytes
 
                 # Success
                 job.status = JobStatus.COMPLETED
                 job.output_files = output_files
+
+                # ── Auto-save to Client Drive ──
+                if last_result_bytes and output_files:
+                    drive_fid = save_report_to_drive_sync(
+                        db=db,
+                        firm_id=job.firm_id,
+                        client_id=job.client_id,
+                        job_type=job.job_type,
+                        output_file_bytes=last_result_bytes,
+                        output_key=output_files[0],
+                    )
+                    if drive_fid:
+                        job.drive_file_id = drive_fid
+
                 db.commit()
                 logger.info(f"Job {job.id} COMPLETED")
 

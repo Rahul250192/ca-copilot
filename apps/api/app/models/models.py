@@ -344,3 +344,56 @@ class VoucherEntry(Base):
         Index('idx_ventry_ledger', 'company_name', 'ledger_name'),
         Index('idx_ventry_date', 'company_name', 'voucher_date'),
     )
+
+
+# ══════════════════════════════════════════════════════════════
+# CLIENT DRIVE TABLES
+# ══════════════════════════════════════════════════════════════
+
+class DriveFolder(Base):
+    """A folder inside a client's drive. Supports nesting via parent_id."""
+    __tablename__ = "drive_folders"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False, index=True)
+    firm_id = Column(UUID(as_uuid=True), ForeignKey("firms.id"), nullable=False, index=True)
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("drive_folders.id", ondelete="CASCADE"), nullable=True, index=True)
+    name = Column(String(255), nullable=False)
+    icon = Column(String(10), default="📁")
+    color = Column(String(20), default="#3b82f6")
+    bg = Column(String(20), default="#eff6ff")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    files = relationship("DriveFile", back_populates="folder", cascade="all, delete-orphan")
+    children = relationship("DriveFolder", back_populates="parent", cascade="all, delete-orphan")
+    parent = relationship("DriveFolder", back_populates="children", remote_side=[id])
+
+    __table_args__ = (
+        sa.UniqueConstraint('client_id', 'firm_id', 'name', 'parent_id', name='uq_drive_folder_client_name'),
+        Index('idx_drive_folder_client', 'client_id', 'firm_id'),
+        Index('idx_drive_folder_parent', 'parent_id'),
+    )
+
+
+class DriveFile(Base):
+    """A file inside a drive folder."""
+    __tablename__ = "drive_files"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    folder_id = Column(UUID(as_uuid=True), ForeignKey("drive_folders.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False, index=True)
+    firm_id = Column(UUID(as_uuid=True), ForeignKey("firms.id"), nullable=False, index=True)
+    name = Column(String(500), nullable=False)          # display name
+    original_name = Column(String(500), nullable=False)  # original upload name
+    file_type = Column(String(50), nullable=False)       # pdf, image, doc, spreadsheet, etc.
+    size_bytes = Column(Integer, default=0)
+    storage_path = Column(String(1000), nullable=False)  # path in local/cloud storage
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    folder = relationship("DriveFolder", back_populates="files")
+
+    __table_args__ = (
+        Index('idx_drive_file_folder', 'folder_id'),
+        Index('idx_drive_file_client', 'client_id', 'firm_id'),
+    )
+

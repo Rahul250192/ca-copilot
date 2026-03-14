@@ -6,6 +6,7 @@ from sqlalchemy.orm import relationship
 import enum
 
 from app.db.base import Base
+from app.services.drive_saver import get_folder_name_for_job
 
 class JobStatus(str, enum.Enum):
     QUEUED = "QUEUED"
@@ -46,6 +47,9 @@ class Job(Base):
     firm_id = Column(UUID(as_uuid=True), ForeignKey("firms.id"), nullable=False, index=True)
     client_id = Column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=True, index=True)
 
+    # Drive integration: ID of the DriveFile where the report was auto-saved
+    drive_file_id = Column(UUID(as_uuid=True), ForeignKey("drive_files.id", ondelete="SET NULL"), nullable=True)
+    meta = Column("metadata", JSONB, default={})
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -53,6 +57,13 @@ class Job(Base):
     # Relationships
     user = relationship("User", backref="jobs")
     events = relationship("JobEvent", back_populates="job", cascade="all, delete-orphan", order_by="JobEvent.created_at")
+
+    @property
+    def drive_folder_name(self):
+        """Return the Drive folder name where this job's report was saved."""
+        if self.drive_file_id:
+            return get_folder_name_for_job(self.job_type)
+        return None
 
 class JobEvent(Base):
     __tablename__ = "job_events"

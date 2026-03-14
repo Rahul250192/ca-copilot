@@ -44,12 +44,13 @@ SERVICES = [
     {"id": "s1", "name": "GST Refund", "description": "Automated GST refund processing and reconciliation."},
     {"id": "s2", "name": "Income Tax Filing", "description": "Seamless income tax return filing for individuals and businesses."},
     {"id": "s3", "name": "Corporate Compliance", "description": "Annual filings and ROC compliance management."},
-    {"id": "s4", "name": "Audit Support", "description": "Expert assistance for statutory and internal audits."}
+    {"id": "s4", "name": "Audit Support", "description": "Expert assistance for statutory and internal audits."},
+    {"id": "s5", "name": "Data Entry", "description": "Quick entry of transactions for seamless compliance."}
 ]
 
 # Client-Service mappings (id -> list of service_ids)
 CLIENT_SERVICES = {
-    "c1": ["s1"],
+    "c1": ["s1", "s5"],
     "c2": ["s1", "s2"]
 }
 
@@ -69,6 +70,21 @@ class UserCreate(BaseModel):
     email: str
     password: str
     firm_name: str
+
+class UserCreatePhone(BaseModel):
+    phone_number: str
+    password: str
+    full_name: str
+    firm_name: str
+    email: Optional[str] = None
+
+class UserCreateGoogle(BaseModel):
+    google_id_token: str
+    firm_name: Optional[str] = None
+
+class PhoneLoginRequest(BaseModel):
+    phone_number: str
+    password: str
 
 class ClientCreate(BaseModel):
     name: str
@@ -98,6 +114,18 @@ def signup(user: UserCreate):
     USERS.append(user.dict())
     return {"message": "User created successfully"}
 
+@app.post("/api/v1/auth/signup/phone")
+def signup_phone(user: UserCreatePhone):
+    USERS.append(user.dict())
+    return {"message": "User created successfully via phone"}
+
+@app.post("/api/v1/auth/signup/google")
+def signup_google(user: UserCreateGoogle):
+    return {
+        "access_token": "mock_token_" + str(uuid.uuid4()),
+        "token_type": "bearer",
+    }
+
 @app.post("/api/v1/auth/login")
 def login(username: str = Form(...), password: str = Form(...)):
     # Simple mock check
@@ -109,6 +137,13 @@ def login(username: str = Form(...), password: str = Form(...)):
             "full_name": "Demo User",
             "email": "demo@example.com"
         }
+    }
+
+@app.post("/api/v1/auth/login/phone")
+def login_phone(body: PhoneLoginRequest):
+    return {
+        "access_token": "mock_token_" + str(uuid.uuid4()),
+        "token_type": "bearer",
     }
 
 @app.get("/api/v1/auth/me")

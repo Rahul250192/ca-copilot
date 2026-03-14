@@ -142,10 +142,18 @@ async def download_job_file(
         
     file_key = job.output_files[0]
     
-    # Use storage service to resolve path (Local) or download (Drive) to a served temp file
+    # Use storage service to resolve path (Local) or download (Supabase/Drive) to a served temp file
     local_path = storage_service.download_to_temp(file_key)
     
     if not local_path or not os.path.exists(local_path):
          raise HTTPException(status_code=404, detail="File not found on server")
+    
+    # Use a clean filename for the download
+    download_name = os.path.basename(file_key)
          
-    return FileResponse(local_path, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename=os.path.basename(local_path))
+    return FileResponse(
+        local_path, 
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 
+        filename=download_name
+    )
+

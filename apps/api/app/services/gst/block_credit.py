@@ -18,24 +18,58 @@ async def analyze_items_with_ai(items: List[Dict[str, Any]]) -> List[Dict[str, A
         return []
 
     system_prompt = """
-    You are an expert Indian GST Compliance Auditor.
-    Your task is to analyze a list of purchase items and determine if the Input Tax Credit (ITC) is 'BLOCKED' or 'ELIGIBLE' under Section 17(5) of the CGST Act.
-    
-    Section 17(5) Blocks ITC on:
-    1. Motor vehicles (except if used for transport of goods, or further supply of vehicles, or training).
-    2. Food and beverages, outdoor catering, beauty treatment, health services, cosmetic and plastic surgery.
-    3. Membership of a club, health and fitness centre.
-    4. Rent-a-cab, life insurance and health insurance.
-    5. Travel benefits to employees (LTC/Home Travel).
-    6. Works contract services for construction of immovable property (except plant and machinery).
-    7. Goods/services for personal consumption.
-    8. Goods lost, stolen, destroyed, written off or given as gifts/samples.
-    
-    For each item, return:
-    - status: "BLOCKED" or "ELIGIBLE"
-    - reason: A short explanation (e.g., "Food & Beverages", "Personal Consumption", "Standard Business Input")
-    
-    Return a JSON array of objects with these keys. Do not include any other text.
+    You are an expert Indian GST Compliance Auditor with deep knowledge of Section 17(5) of the CGST Act.
+    Your task is to classify each purchase item's Input Tax Credit (ITC) eligibility.
+
+    CLASSIFICATION:
+    Use exactly one of these three statuses:
+    - "BLOCKED"       — ITC is clearly blocked under Section 17(5). No ambiguity.
+    - "ELIGIBLE"      — ITC is clearly eligible. Standard business input with no restrictions.
+    - "NEEDS_REVIEW"  — ITC eligibility depends on conditions that cannot be determined from the description alone. Requires human verification.
+
+    SECTION 17(5) — ITC IS BLOCKED ON:
+    1. Motor vehicles and conveyances — BLOCKED, except when used for:
+       (a) further supply of such vehicles, (b) transportation of passengers, (c) imparting training on driving/flying/navigating.
+       → If vehicle purpose is ambiguous, mark NEEDS_REVIEW.
+    2. Food, beverages, outdoor catering, beauty treatment, health services, cosmetic/plastic surgery
+       — Always BLOCKED (unless provided as an output service by the taxpayer).
+    3. Membership of club, health and fitness centre — Always BLOCKED.
+    4. Rent-a-cab, life insurance, health insurance
+       — BLOCKED, unless the employer is obligated under law to provide them to employees.
+       → Mark as NEEDS_REVIEW with reason "Verify if statutory obligation exists".
+    5. Travel benefits for employees on vacation (LTC/Home Travel) — Always BLOCKED.
+       Travel for business purposes — ELIGIBLE but mark NEEDS_REVIEW with reason "Business Travel — verify employee purpose".
+    6. Works contract for construction of immovable property — BLOCKED (except plant & machinery).
+    7. Goods/services received for personal consumption — BLOCKED.
+    8. Goods lost, stolen, destroyed, written off, or disposed as gift/samples — BLOCKED.
+
+    IMPORTANT EDGE CASES (always follow these):
+    - GTA (Goods Transport Agency) / Transport services (HSN 9965/9966):
+      → If GST is charged by GTA on invoice (forward charge), ITC is ELIGIBLE.
+      → If under RCM, ITC is eligible but mark NEEDS_REVIEW: "Transport of Goods — subject to RCM compliance verification".
+      → Never mark simply as "Transport of Goods" without qualification.
+    - Air tickets / Business travel (HSN 9964):
+      → Mark NEEDS_REVIEW: "Business Travel — verify employee purpose & not personal/vacation".
+    - Repairs to motor vehicles:
+      → BLOCKED if for passenger vehicles, but ELIGIBLE if for goods vehicles.
+      → Mark NEEDS_REVIEW: "Vehicle Repair — verify if goods carrier or passenger vehicle".
+    - Insurance (HSN 9971):
+      → Health/life insurance: BLOCKED unless statutory obligation. Mark NEEDS_REVIEW.
+      → Property/cargo insurance: ELIGIBLE.
+    - Gifts, samples, freebies:
+      → Always BLOCKED: "Gifts/Samples — Section 17(5)(h)".
+    - Construction / Renovation:
+      → BLOCKED for immovable property. ELIGIBLE for plant & machinery.
+      → Mark NEEDS_REVIEW: "Construction — verify if immovable property or plant & machinery".
+
+    REASONING GUIDELINES:
+    - NEVER use generic reasons like "Standard Business Input". Always be specific.
+    - Good reasons: "Manufacturing Raw Material", "Office Supplies — operational input",
+      "IT Services — business operations", "Professional Fees — compliance services".
+    - For NEEDS_REVIEW, always explain WHAT needs to be verified.
+
+    Return a JSON array of objects with keys: "status", "reason".
+    Do not include any other text outside the JSON array.
     """
     
     formatted_items = "\n".join([f"- {i.get('description', '')} (HSN: {i.get('hsn', '')})" for i in items])
@@ -152,17 +186,59 @@ async def process_block_credit_job(input_bytes_list: List[bytes], filenames: Lis
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#1E3A8A', 'font_color': 'white', 'border': 1})
         blocked_fmt = workbook.add_format({'bg_color': '#FEE2E2', 'font_color': '#991B1B'})
         eligible_fmt = workbook.add_format({'bg_color': '#DCFCE7', 'font_color': '#166534'})
+        review_fmt = workbook.add_format({'bg_color': '#FEF3C7', 'font_color': '#92400E'})
 
         # Apply header format
         for col_num, value in enumerate(pr_df.columns.values):
             worksheet.write(0, col_num, value, header_fmt)
-            worksheet.set_column(col_num, col_num, 15)
+            worksheet.set_column(col_num, col_num, 18)
 
-        # Highlight Blocked Rows
+        # Highlight rows by status
         status_idx = list(pr_df.columns).index("itc_status")
         for row_num in range(len(pr_df)):
-            status = pr_df.iloc[row_num, status_idx]
-            fmt = blocked_fmt if status == "BLOCKED" else eligible_fmt
+            status = str(pr_df.iloc[row_num, status_idx]).upper()
+            if status == "BLOCKED":
+                fmt = blocked_fmt
+            elif status == "NEEDS_REVIEW":
+                fmt = review_fmt
+            else:
+                fmt = eligible_fmt
             worksheet.set_row(row_num + 1, None, fmt)
+
+        # ── Summary Sheet ──
+        total = len(pr_df)
+        blocked_count = len(pr_df[pr_df["itc_status"].str.upper() == "BLOCKED"])
+        review_count = len(pr_df[pr_df["itc_status"].str.upper() == "NEEDS_REVIEW"])
+        eligible_count = total - blocked_count - review_count
+
+        summary_ws = workbook.add_worksheet("Summary")
+        title_fmt = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#1E3A8A'})
+        label_fmt = workbook.add_format({'bold': True, 'font_size': 11, 'border': 1})
+        val_fmt = workbook.add_format({'font_size': 11, 'border': 1, 'align': 'center'})
+
+        summary_ws.set_column(0, 0, 30)
+        summary_ws.set_column(1, 1, 15)
+        summary_ws.write(0, 0, "AI Block Credit — Summary", title_fmt)
+        summary_ws.write(2, 0, "Status", header_fmt)
+        summary_ws.write(2, 1, "Count", header_fmt)
+        summary_ws.write(3, 0, "✅ ELIGIBLE", label_fmt)
+        summary_ws.write(3, 1, eligible_count, val_fmt)
+        summary_ws.write(4, 0, "🔴 BLOCKED", label_fmt)
+        summary_ws.write(4, 1, blocked_count, val_fmt)
+        summary_ws.write(5, 0, "⚠️ NEEDS REVIEW", label_fmt)
+        summary_ws.write(5, 1, review_count, val_fmt)
+        summary_ws.write(6, 0, "Total Items", label_fmt)
+        summary_ws.write(6, 1, total, val_fmt)
+
+        # List items that need review
+        if review_count > 0:
+            summary_ws.write(8, 0, "Items Needing Review", title_fmt)
+            summary_ws.write(9, 0, "Item", header_fmt)
+            summary_ws.write(9, 1, "Reason", header_fmt)
+            summary_ws.set_column(1, 1, 50)
+            review_rows = pr_df[pr_df["itc_status"].str.upper() == "NEEDS_REVIEW"]
+            for idx, (_, row) in enumerate(review_rows.iterrows()):
+                summary_ws.write(10 + idx, 0, str(row.get(desc_col, "")), review_fmt)
+                summary_ws.write(10 + idx, 1, str(row.get("blocking_reason", "")), review_fmt)
 
     return output.getvalue()

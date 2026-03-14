@@ -31,6 +31,8 @@ class JobResponse(JobBase):
     id: UUID
     status: JobStatus
     output_files: List[Any] = []
+    drive_file_id: Optional[UUID] = None
+    drive_folder_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     events: List[JobEventSchema] = []

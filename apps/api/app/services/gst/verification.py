@@ -125,5 +125,9 @@ def verify_gstins(input_bytes_list: List[bytes]) -> bytes:
             "Verified At": pd.Timestamp.now()
         })
         time.sleep(RATE_LIMIT_DELAY)
-
+    # 3. Build output Excel
+    df_out = pd.DataFrame(results)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_out.to_excel(writer, index=False, sheet_name="GSTIN Verification")
     return output.getvalue()
