@@ -168,3 +168,5 @@ storage/
 
 google-credentials.json
 uploads/
+credentials.json
+token.json

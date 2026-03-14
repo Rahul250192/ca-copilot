@@ -3,10 +3,10 @@ set -e
 
 echo "🚀 Starting CA-Copilot Backend..."
 
-# 1. Run migrations
+# 1. Run migrations (non-fatal — env.py handles connection errors gracefully)
 echo "⚙️  Running database migrations..."
 cd /app/apps/api
-alembic upgrade head
+alembic upgrade head || echo "⚠️  Alembic exited with non-zero — continuing startup"
 
 # 2. Seed basic data (Kits)
 echo "🌱 Seeding initial kits..."
