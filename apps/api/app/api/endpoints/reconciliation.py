@@ -17,7 +17,7 @@ from app.models.job import Job, JobStatus, JobType, JobEvent
 from app.services.storage import storage_service
 from app.services.gst.reconciliation import (
     load_reconciliation_file, identify_columns, rename_to_standard,
-    match_data, drop_total_rows, separate_blocked_itc,
+    match_data, drop_total_rows, separate_blocked_itc, filter_voucher_types,
     get_source_labels, generate_excel_report,
 )
 from app.services.drive_saver import save_report_to_drive_async
@@ -57,6 +57,9 @@ async def run_reconciliation(
         df1 = load_reconciliation_file(bytes1, fn1)
         df2 = load_reconciliation_file(bytes2, fn2)
 
+        logger.info(f"━━━ Loaded: {fn1} ({len(df1)} rows, cols: {list(df1.columns)[:8]})")
+        logger.info(f"━━━ Loaded: {fn2} ({len(df2)} rows, cols: {list(df2.columns)[:8]})")
+
         cols1 = identify_columns(df1)
         cols2 = identify_columns(df2)
 
@@ -64,15 +67,21 @@ async def run_reconciliation(
         df2_std = rename_to_standard(df2, cols2)
 
         # ── Clean: Drop total rows ──
-        df1_std = drop_total_rows(df1_std, "Source 1")
-        df2_std = drop_total_rows(df2_std, "Source 2")
+        df1_std = drop_total_rows(df1_std, "GSTR-2B")
+        df2_std = drop_total_rows(df2_std, "PR")
+
+        # ── Filter voucher types (only Purchase & Debit Note from Tally) ──
+        df2_std = filter_voucher_types(df2_std, "PR")
 
         # ── Separate blocked ITC ──
-        df1_std, df1_blocked = separate_blocked_itc(df1_std, "Source 1")
-        df2_std, df2_blocked = separate_blocked_itc(df2_std, "Source 2")
+        df1_std, df1_blocked = separate_blocked_itc(df1_std, "GSTR-2B")
+        df2_std, df2_blocked = separate_blocked_itc(df2_std, "PR")
+
+        logger.info(f"━━━ After cleaning → GSTR-2B: {len(df1_std)} rows, PR: {len(df2_std)} rows")
 
         # ── Run matching ──
         result_df = match_data(df1_std, df2_std, job_type)
+
 
         # ── Source labels ──
         source1_label, source2_label = get_source_labels(job_type)
@@ -181,6 +190,18 @@ async def run_reconciliation(
         )
         job = result.scalars().first()
 
+        # ── Low PR row count warning ──
+        pr_count = len(df2_std)
+        gstr2b_count = len(df1_std)
+        low_pr_warning = None
+        if gstr2b_count > 0 and pr_count < gstr2b_count * 0.3:
+            low_pr_warning = (
+                f"⚠️ Purchase Register has only {pr_count} rows vs {gstr2b_count} rows in GSTR-2B. "
+                f"This may indicate the Tally export is incomplete. "
+                f"Please re-export including Journal vouchers with GST entries."
+            )
+            logger.warning(f"  ⚠️ Low PR warning: {pr_count} PR rows vs {gstr2b_count} 2B rows")
+
         return JSONResponse(content={
             "success": True,
             "job_id": str(job.id),
@@ -196,6 +217,7 @@ async def run_reconciliation(
             },
             "tax_summary": tax_summary,
             "blocked_itc": blocked_summary,
+            "low_pr_warning": low_pr_warning,
             "columns": display_cols,
             "rows": rows_data,
             "total_rows": total,
