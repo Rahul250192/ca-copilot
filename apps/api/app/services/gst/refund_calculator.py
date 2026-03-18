@@ -68,7 +68,10 @@ def _calculate_rule_89_4(data: Dict[str, Any]) -> Dict[str, Any]:
                    × Net ITC
 
     Where:
-      Adjusted Total Turnover = Total Turnover − Exempt Turnover (excl. zero-rated)
+      FOB Value = Zero-Rated Export Turnover (goods + services)
+      Adjusted Total Turnover = Zero-Rated Export Turnover
+                                + Turnover of State
+                                − Exempt & Nil Rated Turnover
       Net ITC = ITC Availed − ITC on Capital Goods − Blocked Credit u/s 17(5) − ITC on Input Services (for goods only)
 
     For services, Net ITC includes input services.
@@ -88,8 +91,9 @@ def _calculate_rule_89_4(data: Dict[str, Any]) -> Dict[str, Any]:
     blocked_credit = float(data.get("blocked_credit", 0))  # u/s 17(5)
     itc_input_services = float(data.get("itc_input_services", 0))  # For goods-only claims
 
-    # ─── Compute ───
-    adjusted_total_turnover = total_turnover - exempt_turnover
+    # Adjusted Total Turnover per Rule 89(4) Explanation:
+    # = Zero-Rated Turnover + Turnover in State − Exempt & Nil Rated Turnover
+    adjusted_total_turnover = turnover_zero_rated + total_turnover - exempt_turnover
     if adjusted_total_turnover <= 0:
         return {
             "error": "Adjusted Total Turnover must be positive. Check exempt turnover.",
@@ -171,7 +175,7 @@ def _calculate_rule_89_5(data: Dict[str, Any]) -> Dict[str, Any]:
                 − ITC on Capital Goods
                 − Blocked ITC u/s 17(5)
       Tax Payable = Output tax on inverted rated supplies
-      Adjusted Total Turnover = Total turnover − exempt turnover
+      Adjusted Total Turnover = Inverted Turnover + Total turnover − exempt turnover
 
     Important:
       - Only goods eligible (services excluded from IDS refund per Section 54(3) proviso)
@@ -188,7 +192,8 @@ def _calculate_rule_89_5(data: Dict[str, Any]) -> Dict[str, Any]:
     tax_payable_inverted = float(data.get("tax_payable_inverted", 0))  # Output tax on inverted supply
 
     # ─── Compute ───
-    adjusted_total_turnover = total_turnover - exempt_turnover
+    # Adjusted Total Turnover = Inverted Turnover + Total Turnover − Exempt
+    adjusted_total_turnover = turnover_inverted + total_turnover - exempt_turnover
     if adjusted_total_turnover <= 0:
         return {
             "error": "Adjusted Total Turnover must be positive.",

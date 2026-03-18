@@ -91,15 +91,25 @@ async def list_ledger_groups(
 async def ledger_stats(
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_active_user),
+    company_name: Optional[str] = None,
 ) -> Any:
-    """Summary stats for the dashboard."""
-    total = (await db.execute(select(func.count(Ledger.id)))).scalar() or 0
-    with_gstin = (await db.execute(
-        select(func.count(Ledger.id)).where(Ledger.party_gstin != None, Ledger.party_gstin != "")
-    )).scalar() or 0
-    groups = (await db.execute(
-        select(func.count(func.distinct(Ledger.parent)))
-    )).scalar() or 0
+    """Summary stats for the dashboard, optionally filtered by company."""
+    base = select(func.count(Ledger.id))
+    if company_name:
+        base = base.where(Ledger.company_name == company_name)
+
+    total = (await db.execute(base)).scalar() or 0
+
+    gstin_q = select(func.count(Ledger.id)).where(Ledger.party_gstin != None, Ledger.party_gstin != "")
+    if company_name:
+        gstin_q = gstin_q.where(Ledger.company_name == company_name)
+    with_gstin = (await db.execute(gstin_q)).scalar() or 0
+
+    grp_q = select(func.count(func.distinct(Ledger.parent)))
+    if company_name:
+        grp_q = grp_q.where(Ledger.company_name == company_name)
+    groups = (await db.execute(grp_q)).scalar() or 0
+
     companies = (await db.execute(
         select(func.count(func.distinct(Ledger.company_name)))
     )).scalar() or 0
@@ -164,15 +174,20 @@ async def list_vouchers(
 async def voucher_stats(
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_active_user),
+    company_name: Optional[str] = None,
 ) -> Any:
-    """Dashboard stats for Tally vouchers by type."""
-    total = (await db.execute(select(func.count(Voucher.id)))).scalar() or 0
+    """Dashboard stats for Tally vouchers by type, optionally filtered by company."""
+    base = select(func.count(Voucher.id))
+    if company_name:
+        base = base.where(Voucher.company_name == company_name)
+    total = (await db.execute(base)).scalar() or 0
 
     type_counts = {}
     for vtype in ["Sales", "Purchase", "Payment", "Receipt", "Journal", "Contra"]:
-        c = (await db.execute(
-            select(func.count(Voucher.id)).where(Voucher.voucher_type == vtype)
-        )).scalar() or 0
+        q = select(func.count(Voucher.id)).where(Voucher.voucher_type == vtype)
+        if company_name:
+            q = q.where(Voucher.company_name == company_name)
+        c = (await db.execute(q)).scalar() or 0
         type_counts[vtype.lower()] = c
 
     return {"total": total, **type_counts}
