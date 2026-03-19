@@ -344,9 +344,13 @@ def run_worker():
                          raise ValueError("No valid input files downloaded")
                     
                     # Execute (Async)
-                    result_bytes = asyncio.get_event_loop().run_until_complete(
+                    result = asyncio.get_event_loop().run_until_complete(
                         process_block_credit_job(input_bytes_list, filenames)
                     )
+                    result_bytes, summary_data = result
+                    
+                    # Store summary in job metadata for frontend display
+                    job.meta = {"itc_summary": summary_data}
                     
                     from datetime import datetime
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

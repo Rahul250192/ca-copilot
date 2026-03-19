@@ -33,9 +33,11 @@ class JobResponse(JobBase):
     output_files: List[Any] = []
     drive_file_id: Optional[UUID] = None
     drive_folder_name: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = Field(None, alias="meta")
     created_at: datetime
     updated_at: datetime
     events: List[JobEventSchema] = []
     
     class Config:
         from_attributes = True
+        populate_by_name = True
