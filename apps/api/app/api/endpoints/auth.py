@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -34,6 +34,13 @@ async def login_access_token(
     if not user or not user.hashed_password or not security.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
         
+    # Check trial expiry for free users (allow login, flag it)
+    trial_expired = False
+    if user.subscription_plan in (None, 'free', 'Free') and user.trial_started_at:
+        days_used = (datetime.utcnow() - user.trial_started_at).days
+        if days_used >= 30:
+            trial_expired = True
+
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
         user.id, expires_delta=access_token_expires
@@ -41,6 +48,7 @@ async def login_access_token(
     return {
         "access_token": access_token,
         "token_type": "bearer",
+        "trial_expired": trial_expired,
     }
 
 
@@ -71,6 +79,13 @@ async def login_phone(
     if not user or not user.hashed_password or not security.verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect phone number or password")
 
+    # Check trial expiry for free users (allow login, flag it)
+    trial_expired = False
+    if user.subscription_plan in (None, 'free', 'Free') and user.trial_started_at:
+        days_used = (datetime.utcnow() - user.trial_started_at).days
+        if days_used >= 30:
+            trial_expired = True
+
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
         user.id, expires_delta=access_token_expires
@@ -78,6 +93,7 @@ async def login_phone(
     return {
         "access_token": access_token,
         "token_type": "bearer",
+        "trial_expired": trial_expired,
     }
 
 
@@ -220,6 +236,13 @@ async def signup_google(
     user = result.scalars().first()
 
     if user:
+        # Check trial expiry for free users (allow login, flag it)
+        trial_expired = False
+        if user.subscription_plan in (None, 'free', 'Free') and user.trial_started_at:
+            days_used = (datetime.utcnow() - user.trial_started_at).days
+            if days_used >= 30:
+                trial_expired = True
+
         # Existing user — just issue a token
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = security.create_access_token(
@@ -228,6 +251,7 @@ async def signup_google(
         return {
             "access_token": access_token,
             "token_type": "bearer",
+            "trial_expired": trial_expired,
         }
 
     # 3. New user — create firm + user
@@ -317,3 +341,33 @@ async def update_user_me(
         current_user.firm_name = current_user.firm.name
         
     return current_user
+
+
+# ═══════════════════════════════════════════════
+# TRIAL STATUS
+# ═══════════════════════════════════════════════
+@router.get("/trial-status")
+async def get_trial_status(
+    current_user: User = Depends(deps.get_current_user),
+) -> Any:
+    """
+    Get trial / subscription status for current user.
+    """
+    plan = current_user.subscription_plan or 'free'
+    trial_started = current_user.trial_started_at
+    created = current_user.created_at
+
+    # Use trial_started_at if available, else created_at
+    start_date = trial_started or created or datetime.utcnow()
+    days_used = (datetime.utcnow() - start_date).days
+    days_remaining = max(0, 30 - days_used)
+    trial_expired = days_used >= 30 and plan.lower() in ('free', '')
+
+    return {
+        "plan": plan,
+        "trial_started_at": start_date.isoformat() if start_date else None,
+        "days_used": days_used,
+        "days_remaining": days_remaining,
+        "trial_expired": trial_expired,
+        "total_trial_days": 30,
+    }

@@ -82,6 +82,7 @@ class User(Base):
     signup_method = Column(String, default="email", nullable=False)
     firm_id = Column(UUID(as_uuid=True), ForeignKey("firms.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    trial_started_at = Column(DateTime, default=datetime.utcnow)  # 30-day free trial starts at signup
 
     firm = relationship("Firm", back_populates="users")
 

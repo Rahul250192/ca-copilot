@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 from pydantic import BaseModel, EmailStr, field_validator
@@ -127,6 +128,8 @@ class UserInDBBase(UserBase):
     id: UUID
     firm_id: UUID
     signup_method: Optional[SignupMethod] = SignupMethod.EMAIL
+    created_at: Optional[datetime] = None
+    trial_started_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
