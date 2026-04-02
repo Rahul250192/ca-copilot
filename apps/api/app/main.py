@@ -1,12 +1,29 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from app.api.api import api_router
 from app.core.config import settings
+from app.db.session import warmup_db
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: warm up the DB connection before accepting requests."""
+    logger.info("🚀 Starting up — warming DB connection...")
+    await warmup_db()
+    yield
+    logger.info("👋 Shutting down...")
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan,
 )
 
 # Set all CORS enabled origins

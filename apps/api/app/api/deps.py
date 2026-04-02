@@ -9,15 +9,11 @@ from sqlalchemy.future import select
 
 from app.core import security
 from app.core.config import settings
-from app.db import session
+from app.db.session import get_db  # retry-enabled DB dependency
 from app.models.models import User
 from app.schemas import token as token_schemas
 
 reusable_oauth2 = HTTPBearer()
-
-async def get_db() -> AsyncGenerator:
-    async with session.AsyncSessionLocal() as db:
-        yield db
 
 async def get_current_user(
     db: AsyncSession = Depends(get_db), 
