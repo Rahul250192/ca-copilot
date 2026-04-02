@@ -55,22 +55,9 @@ AsyncSessionLocal = sessionmaker(
 
 
 async def get_db():
-    """DB dependency with automatic retry on connection failure."""
-    last_err = None
-    for attempt in range(3):
-        try:
-            async with AsyncSessionLocal() as session:
-                yield session
-                return
-        except Exception as e:
-            last_err = e
-            if attempt < 2:
-                wait = (attempt + 1) * 2  # 2s, 4s
-                logger.warning(f"DB connection attempt {attempt+1} failed, retrying in {wait}s: {e}")
-                await asyncio.sleep(wait)
-            else:
-                logger.error(f"DB connection failed after 3 attempts: {e}")
-                raise last_err
+    """DB dependency — pool_pre_ping + warmup handle connection issues."""
+    async with AsyncSessionLocal() as session:
+        yield session
 
 
 async def warmup_db():
