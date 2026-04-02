@@ -1,10 +1,7 @@
 import asyncio
-import uuid
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select
-from app.models.models import Service # Adjust imports based on path
-from app.core.config import settings
+from app.models.models import Service
+from app.db.session import AsyncSessionLocal, engine
 
 SERVICES_TO_ADD = [
     {"name": "GST Refund", "description": "Automated GST refund filing and reconciliation"},
@@ -20,11 +17,7 @@ SERVICES_TO_ADD = [
 ]
 
 async def seed_services():
-    # Use config database URL
-    engine = create_async_engine(settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"))
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async with async_session() as session:
+    async with AsyncSessionLocal() as session:
         print("Checking existing services...")
         
         for svc_data in SERVICES_TO_ADD:

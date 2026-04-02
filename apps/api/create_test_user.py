@@ -1,18 +1,11 @@
 import asyncio
-import uuid
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select
-from app.models.models import Firm, User, UserRole # Adjust imports based on path
-from app.core.config import settings
+from app.models.models import Firm, User, UserRole
 from app.core.security import get_password_hash
+from app.db.session import AsyncSessionLocal, engine
 
 async def create_user():
-    # Use config database URL
-    engine = create_async_engine(settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"))
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async with async_session() as session:
+    async with AsyncSessionLocal() as session:
         # 1. Check/Create Firm
         print("Checking for existing firm...")
         result = await session.execute(select(Firm).where(Firm.name == "Demo Firm").limit(1))

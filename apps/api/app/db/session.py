@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 is_local = "localhost" in settings.DATABASE_URL or "127.0.0.1" in settings.DATABASE_URL
 
 connect_args = {
-    "command_timeout": 30,
+    "command_timeout": 60,
     "statement_cache_size": 0,       # CRITICAL — PgBouncer doesn't support prepared statements
     "prepared_statement_cache_size": 0,  # Belt-and-suspenders for older asyncpg
-    "timeout": 10,                   # Short timeout, retry handles failures
+    "timeout": 30,                   # Supabase free-tier can take 20s+ on cold start
     "server_settings": {
         "jit": "off",                # Faster connection setup
         "tcp_keepalives_idle": "600",
@@ -38,9 +38,10 @@ engine = create_async_engine(
     str(settings.DATABASE_URL),
     echo=False,
     future=True,
-    pool_size=5,          # Keep 5 warm connections (NullPool was cold-connecting every time)
+    pool_size=3,          # Keep small for free tier (max 5 total with overflow)
     max_overflow=2,       # Allow 2 extra under load
-    pool_recycle=300,     # Recycle connections every 5 min
+    pool_timeout=30,      # Seconds to wait for a connection from the pool
+    pool_recycle=180,     # Recycle connections every 3 min (PgBouncer-safe)
     pool_pre_ping=True,   # Test connection before using
     connect_args=connect_args,
 )

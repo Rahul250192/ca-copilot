@@ -4,8 +4,7 @@ import sys
 from app.core import security
 from app.models.models import User
 from sqlalchemy.future import select
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from app.db.session import AsyncSessionLocal, engine
 from app.core.config import settings
 from datetime import timedelta
 
@@ -39,9 +38,7 @@ async def test_api():
     # If login failed, generate token manually to test services
     if not token:
         print("\n--- 2. Generating Manual Token for Testing ---")
-        engine = create_async_engine(settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"))
-        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as session:
+        async with AsyncSessionLocal() as session:
             result = await session.execute(select(User).where(User.email == email))
             user = result.scalars().first()
             if user:
@@ -50,9 +47,7 @@ async def test_api():
                 print(f"Generated Token for User ID: {user.id}")
             else:
                 print("CRITICAL: User not found in DB for manual token generation.")
-                await engine.dispose()
                 return
-        await engine.dispose()
 
     print(f"\n--- 3. Testing Services API ({BASE_URL}/services/) ---")
     async with httpx.AsyncClient() as client:
