@@ -14,8 +14,14 @@ import ssl
 is_local = "localhost" in settings.DATABASE_URL or "127.0.0.1" in settings.DATABASE_URL
 
 connect_args = {
-    "command_timeout": 60,
+    "command_timeout": 120,
     "statement_cache_size": 0,
+    "timeout": 120,  # connection timeout (seconds)
+    "server_settings": {
+        "tcp_keepalives_idle": "600",
+        "tcp_keepalives_interval": "30",
+        "tcp_keepalives_count": "10",
+    },
 }
 
 if not is_local:
@@ -32,7 +38,8 @@ engine = create_async_engine(
     echo=False,
     future=True,
     poolclass=NullPool,
-    connect_args=connect_args
+    connect_args=connect_args,
+    pool_pre_ping=True,
 )
 
 AsyncSessionLocal = sessionmaker(
