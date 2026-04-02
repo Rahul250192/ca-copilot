@@ -4,7 +4,6 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -15,10 +14,12 @@ logger = logging.getLogger(__name__)
 is_local = "localhost" in settings.DATABASE_URL or "127.0.0.1" in settings.DATABASE_URL
 
 connect_args = {
-    "command_timeout": 120,
-    "statement_cache_size": 0,
-    "timeout": 120,
+    "command_timeout": 30,
+    "statement_cache_size": 0,       # CRITICAL — PgBouncer doesn't support prepared statements
+    "prepared_statement_cache_size": 0,  # Belt-and-suspenders for older asyncpg
+    "timeout": 10,                   # Short timeout, retry handles failures
     "server_settings": {
+        "jit": "off",                # Faster connection setup
         "tcp_keepalives_idle": "600",
         "tcp_keepalives_interval": "30",
         "tcp_keepalives_count": "10",
@@ -37,9 +38,11 @@ engine = create_async_engine(
     str(settings.DATABASE_URL),
     echo=False,
     future=True,
-    poolclass=NullPool,
+    pool_size=5,          # Keep 5 warm connections (NullPool was cold-connecting every time)
+    max_overflow=2,       # Allow 2 extra under load
+    pool_recycle=300,     # Recycle connections every 5 min
+    pool_pre_ping=True,   # Test connection before using
     connect_args=connect_args,
-    pool_pre_ping=True,
 )
 
 AsyncSessionLocal = sessionmaker(
