@@ -30,7 +30,7 @@ engine = create_engine(
     max_overflow=0,
     pool_recycle=60,
     pool_timeout=30,
-    connect_args={"connect_timeout": 10},
+    connect_args={"connect_timeout": 30},
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
