@@ -11,10 +11,20 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
+async def heartbeat():
+    while True:
+        await asyncio.sleep(30)
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(text("SELECT 1"))
+        except Exception:
+            pass
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🚀 Starting up — warming DB connection...")
+    asyncio.create_task(heartbeat()) 
     # asyncio.create_task(warmup_db())  # ← changed from await to create_task
     yield
     logger.info("👋 Shutting down...")
