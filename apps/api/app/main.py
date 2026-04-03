@@ -7,15 +7,15 @@ from starlette.middleware.cors import CORSMiddleware
 from app.api.api import api_router
 from app.core.config import settings
 from app.db.session import warmup_db
+import asyncio
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: warm up the DB connection before accepting requests."""
     logger.info("🚀 Starting up — warming DB connection...")
-    await warmup_db()
+    asyncio.create_task(warmup_db())  # ← changed from await to create_task
     yield
     logger.info("👋 Shutting down...")
 
