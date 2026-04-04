@@ -577,6 +577,201 @@ class FinancialInstrumentUpload(Base):
 
 
 # ═══════════════════════════════════════════════════════
+# PMS Accounting — FIFO Lot Tracking & Capital Gains
+# ═══════════════════════════════════════════════════════
+
+class PMSAccount(Base):
+    """One row per PMS provider × strategy × client.
+    Tracks provider details and accrual configuration."""
+    __tablename__ = "pms_accounts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider_name = Column(String(200), nullable=False)       # Abakkus, Marcellus, ASK, etc.
+    strategy_name = Column(String(200), nullable=True)        # Emerging Opportunities, Value, etc.
+    account_code = Column(String(100), nullable=True)         # PMS account number
+    pms_start_date = Column(sa.Date, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    config = Column(JSONB, default={})                        # {accrual_mode: "daily"|"quarterly_actual"}
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    transactions = relationship("PMSTransaction", back_populates="pms_account", cascade="all, delete-orphan")
+    dividends = relationship("PMSDividend", back_populates="pms_account", cascade="all, delete-orphan")
+    expenses = relationship("PMSExpense", back_populates="pms_account", cascade="all, delete-orphan")
+    lots = relationship("FIFOLot", back_populates="pms_account", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        sa.UniqueConstraint('client_id', 'provider_name', 'strategy_name', name='uq_pms_account_client_provider_strategy'),
+        Index('idx_pms_account_client', 'client_id'),
+    )
+
+
+class SecurityMaster(Base):
+    """Canonical security names + ISIN. Shared across all clients.
+    Aliases enable fuzzy matching across PMS providers."""
+    __tablename__ = "security_master"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    isin = Column(String(12), unique=True, nullable=True, index=True)
+    name = Column(String(500), nullable=False)                 # canonical name
+    exchange = Column(String(20), nullable=True)               # NSE / BSE
+    aliases = Column(JSONB, default=[])                        # fuzzy-matched alternate names from providers
+    fmv_31jan2018 = Column(sa.Numeric(15, 4), nullable=True)   # for Section 112A grandfathering
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PMSTransaction(Base):
+    """Individual Buy/Sell/Dividend/TDS transactions parsed from PMS PDFs.
+    Each row = one line from the Transaction Statement."""
+    __tablename__ = "pms_transactions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pms_account_id = Column(UUID(as_uuid=True), ForeignKey("pms_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    upload_id = Column(UUID(as_uuid=True), ForeignKey("fi_uploads.id", ondelete="SET NULL"), nullable=True)
+    security_id = Column(UUID(as_uuid=True), ForeignKey("security_master.id"), nullable=True)
+    tx_date = Column(sa.Date, nullable=False)
+    tx_type = Column(String(30), nullable=False)               # BUY, SELL, DIVIDEND, TDS_TRANSFER, BONUS, SPLIT
+    security_name = Column(String(500), nullable=False)        # raw name from PDF
+    exchange = Column(String(20), nullable=True)
+    quantity = Column(sa.Numeric(15, 6), nullable=True)        # supports fractional shares
+    unit_price = Column(sa.Numeric(15, 4), nullable=True)
+    brokerage = Column(sa.Numeric(15, 2), default=0)
+    stt = Column(sa.Numeric(15, 2), default=0)
+    stamp_duty = Column(sa.Numeric(15, 2), default=0)
+    settlement_amt = Column(sa.Numeric(15, 2), nullable=True)  # net amount credited/debited
+    narration = Column(Text, nullable=True)
+    is_duplicate = Column(Boolean, default=False)              # for overlap period detection
+    je_status = Column(String(20), default="pending")          # pending / approved / synced
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    pms_account = relationship("PMSAccount", back_populates="transactions")
+    gain_matches = relationship("CapitalGainMatch", back_populates="sell_tx",
+                                foreign_keys="CapitalGainMatch.sell_tx_id")
+
+    __table_args__ = (
+        Index('idx_pms_tx_account', 'pms_account_id'),
+        Index('idx_pms_tx_date', 'pms_account_id', 'tx_date'),
+        Index('idx_pms_tx_security', 'pms_account_id', 'security_name'),
+    )
+
+
+class FIFOLot(Base):
+    """Each purchase creates a FIFO lot. Sales consume oldest lots first.
+    remaining_qty tracks what's still held. Opening balances have is_opening=True."""
+    __tablename__ = "fifo_lots"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pms_account_id = Column(UUID(as_uuid=True), ForeignKey("pms_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    security_id = Column(UUID(as_uuid=True), ForeignKey("security_master.id"), nullable=True)
+    security_name = Column(String(500), nullable=False)        # denormalized for fast display
+    purchase_tx_id = Column(UUID(as_uuid=True), ForeignKey("pms_transactions.id", ondelete="SET NULL"), nullable=True)
+    purchase_date = Column(sa.Date, nullable=False)
+    original_qty = Column(sa.Numeric(15, 6), nullable=False)
+    remaining_qty = Column(sa.Numeric(15, 6), nullable=False)
+    cost_per_unit = Column(sa.Numeric(15, 4), nullable=False)
+    total_cost = Column(sa.Numeric(15, 2), nullable=True)      # original_qty × cost_per_unit
+    is_opening = Column(Boolean, default=False)                 # True for opening balance lots
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    pms_account = relationship("PMSAccount", back_populates="lots")
+    gain_matches = relationship("CapitalGainMatch", back_populates="lot")
+
+    __table_args__ = (
+        Index('idx_fifo_lot_account', 'pms_account_id'),
+        Index('idx_fifo_lot_security', 'pms_account_id', 'security_name'),
+        Index('idx_fifo_lot_date', 'pms_account_id', 'purchase_date'),
+    )
+
+
+class CapitalGainMatch(Base):
+    """FIFO lot consumption record. Each sale may consume multiple lots.
+    Records cost basis, gain/loss, holding period, and grandfathering."""
+    __tablename__ = "capital_gain_matches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    sell_tx_id = Column(UUID(as_uuid=True), ForeignKey("pms_transactions.id", ondelete="CASCADE"), nullable=False, index=True)
+    lot_id = Column(UUID(as_uuid=True), ForeignKey("fifo_lots.id", ondelete="CASCADE"), nullable=False)
+    qty_consumed = Column(sa.Numeric(15, 6), nullable=False)
+    cost_basis = Column(sa.Numeric(15, 2), nullable=False)     # qty × effective_cost
+    sale_proceeds = Column(sa.Numeric(15, 2), nullable=False)
+    gain_loss = Column(sa.Numeric(15, 2), nullable=False)
+    holding_days = Column(Integer, nullable=True)
+    gain_type = Column(String(4), nullable=False)              # STCG / LTCG
+    is_grandfathered = Column(Boolean, default=False)          # Section 112A applied
+    effective_cost_per_unit = Column(sa.Numeric(15, 4), nullable=True)  # max(cost, FMV 31-Jan-2018)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    sell_tx = relationship("PMSTransaction", back_populates="gain_matches",
+                           foreign_keys=[sell_tx_id])
+    lot = relationship("FIFOLot", back_populates="gain_matches")
+
+    __table_args__ = (
+        Index('idx_cg_match_sell', 'sell_tx_id'),
+        Index('idx_cg_match_lot', 'lot_id'),
+    )
+
+
+class PMSDividend(Base):
+    """Dividend records parsed from the Dividend Statement PDF.
+    Tracks ex-date, TDS, gross/net for each security."""
+    __tablename__ = "pms_dividends"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pms_account_id = Column(UUID(as_uuid=True), ForeignKey("pms_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    upload_id = Column(UUID(as_uuid=True), ForeignKey("fi_uploads.id", ondelete="SET NULL"), nullable=True)
+    security_id = Column(UUID(as_uuid=True), ForeignKey("security_master.id"), nullable=True)
+    security_name = Column(String(500), nullable=False)
+    ex_date = Column(sa.Date, nullable=True)
+    received_date = Column(sa.Date, nullable=True)
+    quantity = Column(sa.Numeric(15, 6), nullable=True)
+    rate_per_share = Column(sa.Numeric(15, 4), nullable=True)
+    gross_amount = Column(sa.Numeric(15, 2), nullable=False)
+    tds_deducted = Column(sa.Numeric(15, 2), default=0)
+    net_received = Column(sa.Numeric(15, 2), nullable=True)
+    je_status = Column(String(20), default="pending")          # pending / approved / synced
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    pms_account = relationship("PMSAccount", back_populates="dividends")
+
+    __table_args__ = (
+        Index('idx_pms_div_account', 'pms_account_id'),
+        Index('idx_pms_div_date', 'pms_account_id', 'ex_date'),
+    )
+
+
+class PMSExpense(Base):
+    """Expenses parsed from Statement of Expenses PDF.
+    Covers STT, management fees, custody fees, performance fees, etc.
+    Distinguishes Paid vs Payable and Accrual vs Actual."""
+    __tablename__ = "pms_expenses"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pms_account_id = Column(UUID(as_uuid=True), ForeignKey("pms_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    upload_id = Column(UUID(as_uuid=True), ForeignKey("fi_uploads.id", ondelete="SET NULL"), nullable=True)
+    expense_type = Column(String(100), nullable=False)         # STT, Management Fee, Custody Fee, etc.
+    expense_date = Column(sa.Date, nullable=True)
+    period_from = Column(sa.Date, nullable=True)
+    period_to = Column(sa.Date, nullable=True)
+    amount = Column(sa.Numeric(15, 2), nullable=False)
+    gst_amount = Column(sa.Numeric(15, 2), default=0)
+    tds_applicable = Column(sa.Numeric(15, 2), default=0)
+    net_payable = Column(sa.Numeric(15, 2), nullable=True)
+    is_paid = Column(Boolean, nullable=True)                   # Paid vs Payable section
+    is_accrual = Column(Boolean, default=False)                # Daily accrual vs actual charge
+    is_stt_recon_only = Column(Boolean, default=False)         # STT from expense stmt = recon only, not booked
+    narration = Column(Text, nullable=True)
+    je_status = Column(String(20), default="pending")          # pending / approved / synced
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    pms_account = relationship("PMSAccount", back_populates="expenses")
+
+    __table_args__ = (
+        Index('idx_pms_exp_account', 'pms_account_id'),
+        Index('idx_pms_exp_type', 'pms_account_id', 'expense_type'),
+    )
+
+
+# ═══════════════════════════════════════════════════════
 # Financial Statements — BS/P&L/Schedules generation
 # ═══════════════════════════════════════════════════════
 

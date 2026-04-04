@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.endpoints import auth, clients, kits, documents, conversations, services, jobs, tools, agreements, hsn_lookup, invoices, vouchers, tally, reconciliation, drive, compliance_calendar, bank_statements, financial_instruments, financial_statements, rule42
+from app.api.endpoints import auth, clients, kits, documents, conversations, services, jobs, tools, agreements, hsn_lookup, invoices, vouchers, tally, reconciliation, drive, compliance_calendar, bank_statements, financial_instruments, financial_statements, rule42, pms_accounting
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -23,4 +23,5 @@ api_router.include_router(bank_statements.router, prefix="/bank-statements", tag
 api_router.include_router(financial_instruments.router, prefix="/financial-instruments", tags=["financial-instruments"])
 api_router.include_router(financial_statements.router, prefix="/financial-statements", tags=["financial-statements"])
 api_router.include_router(rule42.router, prefix="/rule42", tags=["rule42"])
+api_router.include_router(pms_accounting.router, prefix="/pms", tags=["pms-accounting"])
 

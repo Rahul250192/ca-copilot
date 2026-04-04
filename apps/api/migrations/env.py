@@ -77,7 +77,15 @@ async def run_migrations_online() -> None:
     
     connect_args = {
         "command_timeout": 60,
-        "statement_cache_size": 0,
+        "statement_cache_size": 0,       # CRITICAL — PgBouncer doesn't support prepared statements
+        "prepared_statement_cache_size": 0,  # Belt-and-suspenders for older asyncpg
+        "timeout": 30,                   # Supabase free-tier can take 20s+ on cold start
+        "server_settings": {
+            "jit": "off",                # Faster connection setup
+            "tcp_keepalives_idle": "600",
+            "tcp_keepalives_interval": "30",
+            "tcp_keepalives_count": "10",
+        },
     }
     
     if not is_local:
