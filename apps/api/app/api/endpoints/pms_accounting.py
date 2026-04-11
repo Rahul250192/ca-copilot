@@ -1227,7 +1227,7 @@ Return this exact JSON:
 }"""
 
 import hashlib
-import openai
+from app.services.ai_client import call_ai
 
 from app.db.session import AsyncSessionLocal
 
@@ -1238,7 +1238,7 @@ async def _extract_text_for_pms(file_bytes: bytes, filename: str) -> str:
     return await _extract_text(file_bytes, filename)
 
 
-async def _parse_pms_with_openai(text: str, statement_type: str) -> dict:
+async def _parse_pms_with_claude(text: str, statement_type: str) -> dict:
     """Parse extracted text with statement-type-specific prompt.
     For large PDFs, splits into chunks and merges results to capture ALL entries."""
     prompts = {
@@ -1256,7 +1256,7 @@ async def _parse_pms_with_openai(text: str, statement_type: str) -> dict:
 
     if len(text) <= CHUNK_SIZE:
         # Small file — single call
-        result = await _call_openai_json(prompt, text)
+        result = await _call_claude_json(prompt, text)
         return result
     else:
         # Large file — split into chunks, parse ALL in parallel, merge
@@ -1267,7 +1267,7 @@ async def _parse_pms_with_openai(text: str, statement_type: str) -> dict:
         tasks = []
         for i, chunk in enumerate(chunks):
             chunk_prompt = prompt + f"\n\n[NOTE: This is chunk {i+1} of {len(chunks)}. Extract ALL entries from this section.]"
-            tasks.append(_call_openai_json(chunk_prompt, chunk))
+            tasks.append(_call_claude_json(chunk_prompt, chunk))
 
         # Run ALL chunks in parallel
         import asyncio
@@ -1312,21 +1312,14 @@ def _split_text_smartly(text: str, chunk_size: int) -> list:
     return chunks
 
 
-async def _call_openai_json(system_prompt: str, user_text: str) -> dict:
-    """Single OpenAI call with JSON response + repair on truncation."""
-    client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-    response = await client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.1,
+async def _call_claude_json(system_prompt: str, user_text: str) -> dict:
+    """Single AI call with JSON response + repair on truncation."""
+    raw = await call_ai(
+        system_prompt=system_prompt + "\n\nReturn ONLY valid JSON. No markdown fences, no extra text.",
+        user_content=user_text,
         max_tokens=16384,
+        temperature=0.1,
     )
-
-    raw = response.choices[0].message.content
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
@@ -1462,7 +1455,7 @@ async def _process_pms_upload(
             await db.commit()
 
             # Parse with AI
-            parsed = await _parse_pms_with_openai(raw_text, statement_type)
+            parsed = await _parse_pms_with_claude(raw_text, statement_type)
 
             # Normalize field names so fi-review.html renders correctly
             normalized = _normalize_for_review(parsed, statement_type)

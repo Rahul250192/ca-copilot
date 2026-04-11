@@ -15,6 +15,8 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str
     OPENAI_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
+    GOOGLE_AI_API_KEY: Optional[str] = None
     
     # Supabase Storage
     SUPABASE_URL: Optional[str] = None

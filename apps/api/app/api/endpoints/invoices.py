@@ -159,7 +159,7 @@ async def upload_invoice(
 
     return {
         "status": "processing",
-        "message": f"Invoice {file.filename} is being processed by AI. It will appear in your transactions within 30-60 seconds.",
+        "message": f"Invoice {file.filename} is being processed by AI.",
         "filename": file.filename,
     }
 
@@ -419,6 +419,47 @@ async def update_invoice(
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
     return invoice
+
+
+@router.delete("/{id}")
+async def delete_invoice(
+    id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """
+    Delete an invoice and its line items.
+    """
+    from sqlalchemy import delete as sql_delete
+
+    query = select(GetInvoice).where(GetInvoice.id == id)
+    result = await db.execute(query)
+    invoice = result.scalars().first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    # Delete line items first
+    await db.execute(
+        sql_delete(InvoiceLineItem).where(InvoiceLineItem.invoice_id == id)
+    )
+
+    # Try to remove file from storage
+    if invoice.file_path:
+        try:
+            from app.core.config import settings
+            from supabase import create_client
+            supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+            parts = invoice.file_path.split("/", 1)
+            if len(parts) == 2:
+                supabase.storage.from_(parts[0]).remove([parts[1]])
+        except Exception as e:
+            logger.warning(f"Could not delete storage file: {e}")
+
+    await db.delete(invoice)
+    await db.commit()
+    logger.info(f"🗑️ Invoice deleted: ID={id}")
+
+    return {"ok": True, "detail": f"Invoice {id} deleted"}
 
 
 @router.get("/{id}/file-url")

@@ -285,16 +285,14 @@ async def ai_select_clauses(
 
     # Try AI-powered selection
     try:
-        from app.core.config import settings
-        import openai
+        from app.services.ai_client import call_ai
+        import asyncio
 
-        if settings.OPENAI_API_KEY:
-            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-            clause_summary = "\n".join(
-                [f"- {c['id']}: {c['title']} (default={'yes' if c.get('is_default') else 'no'})" for c in clauses]
-            )
+        clause_summary = "\n".join(
+            [f"- {c['id']}: {c['title']} (default={'yes' if c.get('is_default') else 'no'})" for c in clauses]
+        )
 
-            prompt = f"""You are a legal expert specializing in Indian law.
+        prompt = f"""You are a legal expert specializing in Indian law.
 The user is creating a "{atype.name}" agreement.
 {f'Additional context: {body.context}' if body.context else ''}
 
@@ -305,24 +303,23 @@ Based on best practices and the context, recommend which clauses should be ENABL
 Return ONLY a JSON array of clause IDs that should be enabled.
 Example: ["pd_1", "pd_2", "pd_5"]"""
 
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=500,
-            )
+        reply = await call_ai(
+            system_prompt="You are a legal clause recommender. Return ONLY a JSON array.",
+            user_content=prompt,
+            max_tokens=500,
+            temperature=0.3,
+        )
 
-            import re
-            reply = response.choices[0].message.content.strip()
-            # Extract JSON array from response
-            match = re.search(r'\[.*\]', reply, re.DOTALL)
-            if match:
-                recommended_ids = json.loads(match.group())
-                return {
-                    "recommended_clause_ids": recommended_ids,
-                    "source": "ai",
-                    "message": "AI-recommended clauses based on your context.",
-                }
+        import re
+        reply = reply.strip()
+        match = re.search(r'\[.*\]', reply, re.DOTALL)
+        if match:
+            recommended_ids = json.loads(match.group())
+            return {
+                "recommended_clause_ids": recommended_ids,
+                "source": "ai",
+                "message": "AI-recommended clauses based on your context.",
+            }
 
     except Exception as e:
         print(f"AI clause selection fallback: {e}")

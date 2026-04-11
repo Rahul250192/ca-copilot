@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-import openai
+from app.services.ai_client import call_ai_json
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select, func
@@ -250,16 +250,13 @@ async def _extract_text(file_bytes: bytes, filename: str) -> str:
     return "\n\n--- PAGE BREAK ---\n\n".join(pages)
 
 
-async def _call_openai(prompt: str, text: str, max_tokens: int = 16000) -> dict:
-    client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-    resp = await client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "system", "content": prompt}, {"role": "user", "content": text}],
-        response_format={"type": "json_object"},
-        temperature=0.1,
+async def _call_claude(prompt: str, text: str, max_tokens: int = 16000) -> dict:
+    return await call_ai_json(
+        system_prompt=prompt,
+        user_content=text,
         max_tokens=max_tokens,
+        temperature=0.1,
     )
-    return json.loads(resp.choices[0].message.content)
 
 
 # ─── Supabase upload ──────────────────────────────────
@@ -388,7 +385,7 @@ async def _process_job(job_id: str, files_data: dict):
             # 2. Structure Trial Balance
             row.status = "parsing_tb"
             await db.commit()
-            tb_structured = await _call_openai(TB_EXTRACTION_PROMPT, extracted.get("trial_balance", ""))
+            tb_structured = await _call_claude(TB_EXTRACTION_PROMPT, extracted.get("trial_balance", ""))
             row.trial_balance_data = tb_structured
             if tb_structured.get("company_name"):
                 row.company_name = tb_structured["company_name"]
@@ -399,7 +396,7 @@ async def _process_job(job_id: str, files_data: dict):
             if "prev_balance_sheet" in extracted and extracted["prev_balance_sheet"].strip():
                 row.status = "parsing_bs"
                 await db.commit()
-                prev_bs = await _call_openai(BS_EXTRACTION_PROMPT, extracted["prev_balance_sheet"])
+                prev_bs = await _call_claude(BS_EXTRACTION_PROMPT, extracted["prev_balance_sheet"])
                 row.prev_bs_data = prev_bs
                 await db.commit()
 
@@ -415,7 +412,7 @@ async def _process_job(job_id: str, files_data: dict):
                 combined_input += "=== NOTES TO ACCOUNTS ===\n"
                 combined_input += extracted["notes"] + "\n"
 
-            result = await _call_openai(MAPPING_AND_GENERATION_PROMPT, combined_input, max_tokens=16000)
+            result = await _call_claude(MAPPING_AND_GENERATION_PROMPT, combined_input, max_tokens=16000)
 
             # Extract metadata from result
             is_balanced = None
@@ -475,7 +472,7 @@ async def _process_tally_job(job_id: str, tally_tb: dict, files_data: dict):
                     if role == 'prev_balance_sheet':
                         row.status = "parsing_bs"
                         await db.commit()
-                        prev_bs = await _call_openai(BS_EXTRACTION_PROMPT, text)
+                        prev_bs = await _call_claude(BS_EXTRACTION_PROMPT, text)
                         row.prev_bs_data = prev_bs
                     elif role == 'notes':
                         extracted_notes = text
@@ -495,7 +492,7 @@ async def _process_tally_job(job_id: str, tally_tb: dict, files_data: dict):
                 combined_input += "=== NOTES TO ACCOUNTS ===\n"
                 combined_input += extracted_notes + "\n"
 
-            result = await _call_openai(MAPPING_AND_GENERATION_PROMPT, combined_input, max_tokens=16000)
+            result = await _call_claude(MAPPING_AND_GENERATION_PROMPT, combined_input, max_tokens=16000)
 
             is_balanced = None
             if result.get("balance_sheet"):

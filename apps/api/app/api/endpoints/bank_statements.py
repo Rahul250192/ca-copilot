@@ -18,7 +18,7 @@ from app.api import deps
 from app.models.models import BankStatement, BankTransaction, User
 from app.services.banking.statement_parser import (
     extract_text_llamaparse,
-    structure_with_openai,
+    structure_with_claude,
     safe_date,
     safe_decimal,
 )
@@ -60,7 +60,7 @@ def _upload_pdf_to_supabase(file_bytes: bytes, statement_id: str, filename: str)
 
 # ─── Background processor ──────────────────────────────
 async def _process_statement(statement_id: str, file_bytes: bytes, filename: str):
-    """Background task: Upload PDF → LlamaParse → OpenAI → save to DB."""
+    """Background task: Upload PDF → LlamaParse → Claude → save to DB."""
     from app.db.session import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
@@ -83,11 +83,11 @@ async def _process_statement(statement_id: str, file_bytes: bytes, filename: str
             raw_text = await extract_text_llamaparse(file_bytes, filename)
             stmt.raw_text = raw_text
 
-            # Step 2 — Structure with OpenAI
+            # Step 2 — Structure with Claude
             stmt.status = "structuring"
             await db.commit()
 
-            structured = await structure_with_openai(raw_text)
+            structured = await structure_with_claude(raw_text)
 
             # Step 3 — Save structured data
             stmt.bank_name = structured.get("bank_name")

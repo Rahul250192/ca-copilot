@@ -12,7 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
-import openai
+from app.services.ai_client import call_ai, call_ai_json
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
 
 
-# ─── OpenAI Structuring Prompts ────────────────────────
+# ─── Claude Structuring Prompts ────────────────────────
 
 DEMAT_PROMPT = """You are a financial data extraction AI specialising in Indian Demat account statements (CDSL/NSDL).
 
@@ -304,8 +304,8 @@ async def _extract_text(file_bytes: bytes, filename: str) -> str:
         raise
 
 
-async def _structure_with_openai(text: str, instrument_type: str) -> dict:
-    """Use OpenAI to structure extracted text based on instrument type."""
+async def _structure_with_claude(text: str, instrument_type: str) -> dict:
+    """Use Claude to structure extracted text based on instrument type."""
     prompts = {"demat": DEMAT_PROMPT, "mutual_fund": MF_PROMPT, "pms": PMS_PROMPT}
     prompt = prompts.get(instrument_type, DEMAT_PROMPT)
 
@@ -315,18 +315,13 @@ async def _structure_with_openai(text: str, instrument_type: str) -> dict:
         logger.info(f"Large file detected (~{estimated_tokens} tokens). Using chunked processing.")
         return await _structure_chunked(text, instrument_type, prompt)
 
-    client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-    response = await client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": text},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.1,
+    result = await call_ai_json(
+        system_prompt=prompt,
+        user_content=text,
         max_tokens=16000,
+        temperature=0.1,
     )
-    return json.loads(response.choices[0].message.content)
+    return result
 
 
 async def _structure_chunked(text: str, instrument_type: str, prompt: str) -> dict:
@@ -367,28 +362,21 @@ async def _structure_chunked(text: str, instrument_type: str, prompt: str) -> di
 
     logger.info(f"Split into {len(chunks)} chunks ({len(data_lines)} data rows, {CHUNK_SIZE} per chunk)")
 
-    client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-
     async def process_chunk(chunk_text: str, chunk_idx: int) -> dict:
         chunk_prompt = prompt + f"\n\nNOTE: This is chunk {chunk_idx + 1} of {len(chunks)}. Extract all data from this chunk."
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = await client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": chunk_prompt},
-                        {"role": "user", "content": chunk_text},
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.1,
+                result = await call_ai_json(
+                    system_prompt=chunk_prompt,
+                    user_content=chunk_text,
                     max_tokens=16000,
+                    temperature=0.1,
                 )
-                result = json.loads(response.choices[0].message.content)
-                logger.info(f"  Chunk {chunk_idx + 1}/{len(chunks)}: OK")
+                logger.info(f"  Chunk {chunk_idx + 1}/{len(chunks)}: OK ({len(result)} keys)")
                 return result
             except Exception as e:
-                wait_time = 30 * (attempt + 1)  # 30s, 60s, 90s
+                wait_time = 30 * (attempt + 1)
                 logger.warning(f"  Chunk {chunk_idx + 1} attempt {attempt + 1} failed: {e}. Retry in {wait_time}s")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(wait_time)
@@ -447,7 +435,7 @@ async def _generate_journal_entries(structured_data: dict) -> dict:
     # Large dataset — chunk by transactions
     logger.info(f"Large structured data (~{estimated_tokens} tokens). Chunking journal generation.")
     transactions = structured_data.get("transactions", [])
-    BATCH = 100
+    BATCH = 30  # Smaller batches to avoid Claude output truncation
     all_entries = []
 
     for i in range(0, max(len(transactions), 1), BATCH):
@@ -472,18 +460,12 @@ async def _generate_journal_entries(structured_data: dict) -> dict:
 
 async def _generate_journal_entries_single(data_str: str) -> dict:
     """Generate journal entries for a single chunk."""
-    client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-    response = await client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": JOURNAL_ENTRY_PROMPT},
-            {"role": "user", "content": data_str},
-        ],
-        response_format={"type": "json_object"},
+    result = await call_ai_json(
+        system_prompt=JOURNAL_ENTRY_PROMPT,
+        user_content=data_str,
+        max_tokens=8000,
         temperature=0.1,
-        max_tokens=16000,
     )
-    result = json.loads(response.choices[0].message.content)
     result["journal_entries"] = _validate_journal_entries(result.get("journal_entries", []))
     return result
 
@@ -599,19 +581,39 @@ async def _process_upload(upload_id: str, file_bytes: bytes, filename: str, inst
                 await db.commit()
 
                 base_type = instrument_type.split('_')[0] if instrument_type.startswith('demat_') else instrument_type
-                structured = await _structure_with_openai(raw_text, base_type)
-                row.structured_data = structured
-                row.status = "generating_entries"
-                await db.commit()
 
-                journal = await _generate_journal_entries(structured)
-                entries = journal.get("journal_entries", [])
+                # Try AI first, fallback to rule-based parser for CAS
+                try:
+                    structured = await _structure_with_claude(raw_text, base_type)
+                    row.structured_data = structured
+                    row.status = "generating_entries"
+                    await db.commit()
+
+                    journal = await _generate_journal_entries(structured)
+                    entries = journal.get("journal_entries", [])
+                except Exception as ai_err:
+                    logger.warning(f"AI pipeline failed: {ai_err}")
+
+                    # ═══ FALLBACK: Rule-based CAS parser (no AI, free) ═══
+                    if base_type == "mutual_fund":
+                        logger.info("🔄 Falling back to rule-based CAS parser (no AI cost)")
+                        from app.services.cas_parser import parse_cas_markdown, generate_journal_entries_from_parsed
+                        structured = parse_cas_markdown(raw_text)
+                        row.structured_data = structured
+                        row.status = "generating_entries"
+                        await db.commit()
+
+                        entries = generate_journal_entries_from_parsed(structured)
+                        logger.info(f"✅ CAS parser: {len(entries)} entries from {len(structured.get('transactions', []))} transactions")
+                    else:
+                        raise ai_err  # Re-raise for non-CAS types
+
                 row.journal_entries = entries
                 row.journal_entry_count = len(entries)
                 row.status = "completed"
                 await db.commit()
 
-                logger.info(f"✅ FI Upload {upload_id} (AI): {len(entries)} journal entries")
+                logger.info(f"✅ FI Upload {upload_id}: {len(entries)} journal entries")
 
         except Exception as e:
             logger.error(f"❌ FI Upload {upload_id} failed: {e}")
@@ -847,6 +849,179 @@ async def get_upload_pdf(
 
 
 # ═══════════════════════════════════════════════════════
+# MANUAL JOURNAL ENTRIES — CRUD for hand-keyed FI vouchers
+# Uses fi_uploads table with instrument_type='manual_entry'
+# ═══════════════════════════════════════════════════════
+
+from pydantic import BaseModel
+from typing import List
+
+class ManualEntryLedger(BaseModel):
+    ledger_name: str
+    group: str = ""
+    amount: float
+    side: str  # "Dr" or "Cr"
+
+class ManualEntryCreate(BaseModel):
+    client_id: str
+    txn_type: str  # purchase, sale, dividend, charges, sip, ipo, bonus, transfer
+    date: str  # YYYY-MM-DD
+    scrip: str
+    narration: str = ""
+    voucher_type: str = "Journal"
+    status: str = "draft"  # draft, approved, synced
+    total_amount: float = 0
+    entries: List[ManualEntryLedger]
+
+class ManualEntryStatusUpdate(BaseModel):
+    status: str  # draft, approved, synced
+
+
+@router.post("/manual-entry")
+async def create_manual_entry(
+    payload: ManualEntryCreate,
+    current_user: User = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(deps.get_db),
+) -> Any:
+    """Create a manual FI journal entry. Persisted in fi_uploads as instrument_type='manual_entry'."""
+    if not payload.scrip:
+        raise HTTPException(400, "Scrip / Fund name is required")
+    if len(payload.entries) < 2:
+        raise HTTPException(400, "Need at least 2 ledger entries (Dr + Cr)")
+
+    upload_id = str(uuid.uuid4())
+    journal_entry = {
+        "date": payload.date,
+        "scrip": payload.scrip,
+        "txn_type": payload.txn_type,
+        "voucher_type": payload.voucher_type,
+        "narration": payload.narration,
+        "status": payload.status,
+        "total_amount": payload.total_amount,
+        "entries": [e.dict() for e in payload.entries],
+        "created_at": datetime.utcnow().isoformat(),
+    }
+
+    row = FinancialInstrumentUpload(
+        id=upload_id,
+        client_id=payload.client_id,
+        user_id=str(current_user.id),
+        instrument_type="manual_entry",
+        filename=f"Manual — {payload.scrip}",
+        file_hash=hashlib.sha256(f"{payload.client_id}-{payload.scrip}-{payload.date}-{upload_id}".encode()).hexdigest(),
+        status="completed",
+        structured_data={"txn_type": payload.txn_type, "scrip": payload.scrip},
+        journal_entries=[journal_entry],
+        journal_entry_count=1,
+    )
+    db.add(row)
+    await db.commit()
+
+    logger.info(f"✅ Manual FI entry created: {upload_id} — {payload.scrip} ({payload.txn_type})")
+    return {
+        "id": upload_id,
+        "status": payload.status,
+        "scrip": payload.scrip,
+        "txn_type": payload.txn_type,
+        "message": f"Manual entry saved — {payload.scrip}",
+    }
+
+
+@router.get("/manual-entries")
+async def list_manual_entries(
+    client_id: str = None,
+    status: str = None,
+    current_user: User = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(deps.get_db),
+) -> Any:
+    """List all manual FI journal entries for a client."""
+    query = select(FinancialInstrumentUpload).where(
+        FinancialInstrumentUpload.instrument_type == "manual_entry"
+    )
+    if client_id:
+        query = query.where(FinancialInstrumentUpload.client_id == client_id)
+    query = query.order_by(FinancialInstrumentUpload.created_at.desc())
+
+    result = await db.execute(query)
+    rows = result.scalars().all()
+
+    entries = []
+    for r in rows:
+        je = (r.journal_entries or [{}])[0] if r.journal_entries else {}
+        entry_status = je.get("status", "draft")
+        if status and entry_status != status:
+            continue
+        entries.append({
+            "id": str(r.id),
+            "client_id": str(r.client_id),
+            "txn_type": je.get("txn_type", ""),
+            "scrip": je.get("scrip", ""),
+            "date": je.get("date", ""),
+            "narration": je.get("narration", ""),
+            "voucher_type": je.get("voucher_type", "Journal"),
+            "status": entry_status,
+            "total_amount": je.get("total_amount", 0),
+            "entries": je.get("entries", []),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+    return entries
+
+
+@router.patch("/manual-entry/{entry_id}/status")
+async def update_manual_entry_status(
+    entry_id: str,
+    payload: ManualEntryStatusUpdate,
+    current_user: User = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(deps.get_db),
+) -> Any:
+    """Update the status of a manual journal entry (draft → approved → synced)."""
+    if payload.status not in ("draft", "approved", "synced"):
+        raise HTTPException(400, "Status must be draft, approved, or synced")
+
+    row = (await db.execute(
+        select(FinancialInstrumentUpload).where(
+            FinancialInstrumentUpload.id == entry_id,
+            FinancialInstrumentUpload.instrument_type == "manual_entry",
+        )
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Manual entry not found")
+
+    # Update status inside JSONB
+    entries = row.journal_entries or [{}]
+    if entries:
+        entries[0]["status"] = payload.status
+    row.journal_entries = entries
+    # Force SQLAlchemy to detect the JSONB change
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(row, "journal_entries")
+    await db.commit()
+
+    return {"id": entry_id, "status": payload.status, "message": f"Status updated to {payload.status}"}
+
+
+@router.delete("/manual-entry/{entry_id}")
+async def delete_manual_entry(
+    entry_id: str,
+    current_user: User = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(deps.get_db),
+) -> Any:
+    """Delete a manual FI journal entry."""
+    row = (await db.execute(
+        select(FinancialInstrumentUpload).where(
+            FinancialInstrumentUpload.id == entry_id,
+            FinancialInstrumentUpload.instrument_type == "manual_entry",
+        )
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Manual entry not found")
+
+    await db.delete(row)
+    await db.commit()
+    return {"message": "Manual entry deleted"}
+
+
+# ═══════════════════════════════════════════════════════
 # 26AS / AIS — Upload, Extract, Auto-Match
 # ═══════════════════════════════════════════════════════
 
@@ -930,24 +1105,18 @@ async def _process_26as_upload(upload_id: str, file_bytes: bytes, filename: str,
             await db.commit()
 
             # AI extraction
-            client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
             estimated_tokens = len(raw_text) // 4
 
             if estimated_tokens > 20000:
                 # Chunked processing for large 26AS
                 structured = await _structure_chunked(raw_text, "26as", TDS_26AS_PROMPT)
             else:
-                response = await client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": TDS_26AS_PROMPT},
-                        {"role": "user", "content": raw_text},
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.1,
+                structured = await call_ai_json(
+                    system_prompt=TDS_26AS_PROMPT,
+                    user_content=raw_text,
                     max_tokens=16000,
+                    temperature=0.1,
                 )
-                structured = json.loads(response.choices[0].message.content)
 
             # Run auto-matching
             row.status = "generating_entries"

@@ -1,7 +1,7 @@
 """
 Banking Statement Parser Service
 ─────────────────────────────────
-Pipeline:  PDF → LlamaParse (text extraction) → OpenAI GPT-4o (JSON structuring) → DB
+Pipeline:  PDF → LlamaParse (text extraction) → Claude (JSON structuring) → DB
 """
 
 import json
@@ -12,14 +12,14 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-import openai
+from app.services.ai_client import call_ai
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-# ─── OpenAI Structuring Prompt ─────────────────────────
+# ─── Claude Structuring Prompt ─────────────────────────
 STRUCTURING_PROMPT = """You are a banking data extraction AI specialising in Indian bank statements.
 
 Given the raw text extracted from a bank statement PDF, extract ALL transaction rows into a strict JSON object.
@@ -37,7 +37,7 @@ Given the raw text extracted from a bank statement PDF, extract ALL transaction 
 7. "party_name" — extract the counterparty name from the description/narration.
 8. "reference_no" — extract cheque number, UTR, NEFT ref, IMPS ref, UPI ref if present.
 
-Return this exact JSON structure (no extra text):
+Return ONLY this exact JSON structure (no extra text, no markdown fences):
 {
     "bank_name": "string",
     "account_number": "string (last 4 digits or masked)",
@@ -205,38 +205,28 @@ def _repair_json(raw: str) -> dict:
 PAGES_PER_CHUNK = 5  # Process 5 pages at a time
 
 
-async def _call_openai_chunk(client, text_chunk: str, is_first: bool) -> Dict[str, Any]:
-    """Send a single chunk to OpenAI and return parsed JSON."""
+async def _call_claude_chunk(client_unused, text_chunk: str, is_first: bool) -> Dict[str, Any]:
+    """Send a single chunk to AI and return parsed JSON."""
     prompt = STRUCTURING_PROMPT
     if not is_first:
         prompt += "\n\nNOTE: This is a CONTINUATION of a multi-page statement. Extract ONLY the transactions from this section. For bank_name, account_number, period_start, period_end, opening_balance, closing_balance — set them to null (they were captured from the first chunk)."
 
-    response = await client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": text_chunk},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.1,
+    content = await call_ai(
+        system_prompt=prompt,
+        user_content=text_chunk,
         max_tokens=16000,
+        temperature=0.1,
     )
-
-    content = response.choices[0].message.content
-    finish_reason = response.choices[0].finish_reason
-    logger.info(f"  Chunk response: {len(content)} chars, finish_reason={finish_reason}")
+    logger.info(f"  Chunk response: {len(content)} chars")
 
     return _repair_json(content)
 
 
-async def structure_with_openai(extracted_text: str) -> Dict[str, Any]:
-    """Step 2: Use OpenAI GPT-4o to structure the extracted text into JSON.
+async def structure_with_claude(extracted_text: str) -> Dict[str, Any]:
+    """Step 2: Use AI to structure the extracted text into JSON.
     For large statements, splits into chunks of 5 pages and merges results."""
 
-    if not settings.OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY not configured")
-
-    client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    client = None  # Not needed — ai_client handles provider selection
 
     # Split text into pages
     pages = extracted_text.split("--- PAGE BREAK ---")
@@ -245,14 +235,14 @@ async def structure_with_openai(extracted_text: str) -> Dict[str, Any]:
 
     # Small statement (≤5 pages) — single call
     if page_count <= PAGES_PER_CHUNK:
-        logger.info("Small statement — single OpenAI call")
+        logger.info("Small statement — single AI call")
         try:
-            result = await _call_openai_chunk(client, extracted_text, is_first=True)
+            result = await _call_claude_chunk(client, extracted_text, is_first=True)
             txn_count = len(result.get("transactions", []))
             logger.info(f"✅ Extracted {txn_count} transactions in single call")
             return result
         except Exception as e:
-            logger.error(f"OpenAI structuring failed: {e}")
+            logger.error(f"AI structuring failed: {e}")
             raise
 
     # Large statement — process in chunks of 5 pages
@@ -265,7 +255,7 @@ async def structure_with_openai(extracted_text: str) -> Dict[str, Any]:
 
     # Process first chunk (gets metadata + transactions)
     try:
-        first_result = await _call_openai_chunk(client, chunks[0], is_first=True)
+        first_result = await _call_claude_chunk(client, chunks[0], is_first=True)
     except Exception as e:
         logger.error(f"First chunk failed: {e}")
         raise
@@ -277,7 +267,7 @@ async def structure_with_openai(extracted_text: str) -> Dict[str, Any]:
     import asyncio
     async def _process_chunk(idx, chunk_text):
         try:
-            chunk_result = await _call_openai_chunk(client, chunk_text, is_first=False)
+            chunk_result = await _call_claude_chunk(client, chunk_text, is_first=False)
             chunk_txns = chunk_result.get("transactions", [])
             logger.info(f"  Chunk {idx}/{len(chunks)}: {len(chunk_txns)} transactions")
             return chunk_txns

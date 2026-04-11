@@ -2,7 +2,7 @@
 Invoice Parser Service
 ──────────────────────
 Replaces n8n invoice processing pipeline.
-Pipeline: PDF/Image → LlamaParse (text extraction) → OpenAI GPT-4o (structured extraction) → DB
+Pipeline: PDF/Image → LlamaParse (text extraction) → Claude (structured extraction) → DB
 """
 
 import json
@@ -10,10 +10,9 @@ import logging
 import re
 from typing import Any, Dict, Optional
 
-import openai
-
 from app.core.config import settings
 from app.services.banking.statement_parser import extract_text_llamaparse, _repair_json
+from app.services.ai_client import call_ai_json
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ Given the raw text extracted from an invoice document, extract all relevant info
 6. If a voucher_type hint is provided, prefer that classification.
 7. Extract line items if present in the invoice.
 
-Return this exact JSON structure (no extra text):
+Return ONLY this exact JSON structure (no extra text, no markdown fences):
 {
     "vendor_name": "string — the seller/vendor/supplier name",
     "gst_number": "string — vendor GSTIN or null",
@@ -84,8 +83,8 @@ async def extract_invoice_data(file_bytes: bytes, filename: str, voucher_type: s
     
     logger.info(f"📝 Extracted {len(extracted_text)} chars from {filename}")
     
-    # Step 2: Structure with OpenAI
-    structured = await _structure_invoice_with_openai(extracted_text, voucher_type)
+    # Step 2: Structure with Claude
+    structured = await _structure_invoice_with_claude(extracted_text, voucher_type)
     
     logger.info(f"✅ Invoice extracted: {structured.get('invoice_number', 'N/A')} | "
                 f"Vendor: {structured.get('vendor_name', 'Unknown')} | "
@@ -94,38 +93,23 @@ async def extract_invoice_data(file_bytes: bytes, filename: str, voucher_type: s
     return structured
 
 
-async def _structure_invoice_with_openai(extracted_text: str, voucher_type: str = "") -> Dict[str, Any]:
-    """Use OpenAI GPT-4o to structure invoice text into JSON."""
-    
-    if not settings.OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY not configured")
-    
-    client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+async def _structure_invoice_with_claude(extracted_text: str, voucher_type: str = "") -> Dict[str, Any]:
+    """Use AI to structure invoice text into JSON."""
     
     # Add voucher type hint if provided
     user_content = extracted_text
     if voucher_type:
         user_content = f"[HINT: This document is likely a {voucher_type} invoice]\n\n{extracted_text}"
     
-    logger.info(f"Sending {len(extracted_text)} chars to OpenAI for invoice extraction...")
+    logger.info(f"Sending {len(extracted_text)} chars for invoice extraction...")
     
     try:
-        response = await client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": INVOICE_EXTRACTION_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            response_format={"type": "json_object"},
+        return await call_ai_json(
+            system_prompt=INVOICE_EXTRACTION_PROMPT,
+            user_content=user_content,
             temperature=0.1,
             max_tokens=4000,
         )
-        
-        content = response.choices[0].message.content
-        structured = _repair_json(content)
-        
-        return structured
-        
     except Exception as e:
-        logger.error(f"OpenAI invoice extraction failed: {e}")
+        logger.error(f"AI invoice extraction failed: {e}")
         raise ValueError(f"AI extraction failed: {e}")
