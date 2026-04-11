@@ -3,7 +3,7 @@ import os
 import json
 import time
 
-BASE_URL = "https://ca-copilot-api.onrender.com/api/v1"
+BASE_URL = "https://ca-copilot-mrwj.onrender.com/api/v1"
 TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Njc3OTk5OTMsInN1YiI6IjlmODFiYmQxLTZlZjUtNGY0MC1iODI0LTJiYWJlZDVmNmY0MSJ9.9PE6JEx6tKxYp3zQmpKmECTQe5sG1g4UfBjF2QIJoY8"
 
 headers = {

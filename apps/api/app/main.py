@@ -41,6 +41,7 @@ all_origins = [str(origin) for origin in settings.BACKEND_CORS_ORIGINS]
 # Whitelist production frontend and local dev
 all_origins.extend([
     "https://complianceaiexpert.netlify.app",
+    "https://ca-copilot-mrwj.onrender.com",
     "http://localhost:3000",
     "http://localhost:8000",
     "http://127.0.0.1:3000",
