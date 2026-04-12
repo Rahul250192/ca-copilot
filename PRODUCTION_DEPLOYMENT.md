@@ -20,7 +20,7 @@ This guide explains how to deploy CA-Copilot to **Render** with complete automat
 4.  Render will automatically see the `render.yaml` file.
 5.  It will ask you for 2 values:
     - **DATABASE_URL**: Paste your Supabase URI (Ensure you use `postgresql://` and not `postgres://`).
-    - **OPENAI_API_KEY**: Paste your OpenAI key.
+    - **LLAMA_CLOUD_API_KEY**: Paste your LlamaCloud key (for PDF parsing).
 6.  Click **Apply**.
 
 ## 3. What happens automatically?

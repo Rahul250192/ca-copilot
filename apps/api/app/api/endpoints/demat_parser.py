@@ -23,22 +23,64 @@ logger = logging.getLogger(__name__)
 # BROKER DETECTION
 # ═══════════════════════════════════════════════════════
 
-def detect_broker(wb: openpyxl.Workbook) -> str:
-    """Detect broker from workbook content."""
+BROKER_PATTERNS = {
+    "zerodha": ["zerodha", "kite", "coin"],
+    "groww": ["groww"],
+    "angel": ["angel one", "angel broking", "angel"],
+    "icici_direct": ["icici direct", "icicidirect", "icici securities"],
+    "hdfc_securities": ["hdfc securities", "hdfc sec"],
+    "kotak_securities": ["kotak securities", "kotak sec"],
+    "upstox": ["upstox", "rksv"],
+    "motilal_oswal": ["motilal", "motilal oswal"],
+    "5paisa": ["5paisa", "5 paisa"],
+    "sharekhan": ["sharekhan"],
+    "paytm_money": ["paytm money", "paytm"],
+    "dhan": ["dhan"],
+}
+
+BROKER_DISPLAY = {
+    "zerodha": "Zerodha", "groww": "Groww", "angel": "Angel One",
+    "icici_direct": "ICICI Direct", "hdfc_securities": "HDFC Securities",
+    "kotak_securities": "Kotak Securities", "upstox": "Upstox",
+    "motilal_oswal": "Motilal Oswal", "5paisa": "5Paisa",
+    "sharekhan": "Sharekhan", "paytm_money": "Paytm Money", "dhan": "Dhan",
+    "unknown": "Unknown Broker",
+}
+
+
+def detect_broker(wb: openpyxl.Workbook, filename: str = "") -> str:
+    """Detect broker from workbook content and filename."""
+    # Check filename first
+    fname_lower = filename.lower()
+    for broker_key, patterns in BROKER_PATTERNS.items():
+        if any(p in fname_lower for p in patterns):
+            return broker_key
+
+    # Check workbook cell content
     for sheet in wb.sheetnames:
         ws = wb[sheet]
         for r in range(1, min(15, ws.max_row + 1)):
-            for c in range(1, min(5, ws.max_column + 1)):
+            for c in range(1, min(8, ws.max_column + 1)):
                 val = str(ws.cell(r, c).value or "").lower()
-                if "zerodha" in val:
-                    return "zerodha"
-                if "groww" in val:
-                    return "groww"
-                if "angel" in val:
-                    return "angel"
-    # Check for Zerodha patterns (Client ID format, typical sheet names)
+                for broker_key, patterns in BROKER_PATTERNS.items():
+                    if any(p in val for p in patterns):
+                        return broker_key
+
+    # Check for Zerodha-specific patterns
     if any(s in ["Equity", "Combined"] for s in wb.sheetnames):
         return "zerodha"
+    # Zerodha tradebook has specific column patterns
+    for sheet in wb.sheetnames:
+        ws = wb[sheet]
+        for r in range(1, 15):
+            row_text = " ".join(str(ws.cell(r, c).value or "") for c in range(1, 15)).lower()
+            if "trade date" in row_text and "trade type" in row_text and "order execution time" in row_text:
+                return "zerodha"
+            if "tradebook" in fname_lower:
+                # Client ID format HV/HA/HK + numbers → Zerodha
+                if any(str(ws.cell(r, c).value or "").startswith("H") for c in range(1, 5)):
+                    return "zerodha"
+
     return "unknown"
 
 
@@ -89,9 +131,10 @@ def cell_val(ws, row: int, col: int, as_type=str):
 def parse_holdings(file_bytes: bytes, filename: str) -> dict:
     """Parse Zerodha holdings Excel → structured JSON."""
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
-    broker = detect_broker(wb)
+    broker = detect_broker(wb, filename)
     result = {
         "broker": broker,
+        "broker_display": BROKER_DISPLAY.get(broker, broker.title()),
         "client_id": None,
         "statement_date": None,
         "holdings": [],
@@ -154,9 +197,12 @@ def parse_holdings(file_bytes: bytes, filename: str) -> dict:
 # ═══════════════════════════════════════════════════════
 
 def parse_taxpnl(file_bytes: bytes, filename: str) -> dict:
-    """Parse Zerodha Tax P&L Excel → structured JSON with tradewise exits."""
+    """Parse broker Tax P&L Excel → structured JSON with tradewise exits."""
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    broker = detect_broker(wb, filename)
     result = {
+        "broker": broker,
+        "broker_display": BROKER_DISPLAY.get(broker, broker.title()),
         "client_id": None,
         "client_name": None,
         "pan": None,
@@ -302,9 +348,12 @@ def parse_taxpnl(file_bytes: bytes, filename: str) -> dict:
 # ═══════════════════════════════════════════════════════
 
 def parse_tradebook(file_bytes: bytes, filename: str) -> dict:
-    """Parse Zerodha tradebook Excel → structured JSON."""
+    """Parse broker tradebook Excel → structured JSON."""
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    broker = detect_broker(wb, filename)
     result = {
+        "broker": broker,
+        "broker_display": BROKER_DISPLAY.get(broker, broker.title()),
         "client_id": None,
         "transactions": [],
     }
@@ -349,7 +398,7 @@ def parse_tradebook(file_bytes: bytes, filename: str) -> dict:
             result["transactions"].append(txn)
 
     wb.close()
-    logger.info(f"✅ Tradebook: {len(result['transactions'])} trades parsed")
+    logger.info(f"✅ Tradebook: {len(result['transactions'])} trades parsed (broker={broker})")
     return result
 
 

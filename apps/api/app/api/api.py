@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.endpoints import auth, clients, kits, documents, conversations, services, jobs, tools, agreements, hsn_lookup, invoices, vouchers, tally, reconciliation, drive, compliance_calendar, bank_statements, financial_instruments, financial_statements, financial_statements_tally, rule42, pms_accounting, depreciation, caro, form3cd
+from app.api.endpoints import auth, clients, kits, documents, conversations, services, jobs, tools, agreements, hsn_lookup, invoices, vouchers, tally, reconciliation, drive, compliance_calendar, bank_statements, financial_instruments, financial_statements, financial_statements_tally, rule42, pms_accounting, depreciation, caro, form3cd, firm_config
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -28,4 +28,5 @@ api_router.include_router(depreciation.router, prefix="/depreciation", tags=["de
 api_router.include_router(caro.router, prefix="/caro", tags=["caro"])
 api_router.include_router(form3cd.router, prefix="/form3cd", tags=["form3cd"])
 api_router.include_router(financial_statements_tally.router, prefix="/fs-tally", tags=["fs-tally"])
+api_router.include_router(firm_config.router, prefix="/config", tags=["firm-config"])
 

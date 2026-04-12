@@ -12,7 +12,11 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
-from app.services.ai_client import call_ai, call_ai_json
+from app.services.fi_rule_parsers import (
+    parse_demat_markdown, parse_pms_markdown, parse_26as_markdown,
+    generate_journal_entries_for_demat, generate_journal_entries_for_pms,
+)
+from app.services.cas_parser import parse_cas_markdown, generate_journal_entries_from_parsed
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -304,98 +308,17 @@ async def _extract_text(file_bytes: bytes, filename: str) -> str:
         raise
 
 
-async def _structure_with_claude(text: str, instrument_type: str) -> dict:
-    """Use Claude to structure extracted text based on instrument type."""
-    prompts = {"demat": DEMAT_PROMPT, "mutual_fund": MF_PROMPT, "pms": PMS_PROMPT}
-    prompt = prompts.get(instrument_type, DEMAT_PROMPT)
-
-    # Check if text is too large and needs chunking
-    estimated_tokens = len(text) // 4  # rough: 1 token ≈ 4 chars
-    if estimated_tokens > 20000:
-        logger.info(f"Large file detected (~{estimated_tokens} tokens). Using chunked processing.")
-        return await _structure_chunked(text, instrument_type, prompt)
-
-    result = await call_ai_json(
-        system_prompt=prompt,
-        user_content=text,
-        max_tokens=16000,
-        temperature=0.1,
-    )
-    return result
-
-
-async def _structure_chunked(text: str, instrument_type: str, prompt: str) -> dict:
-    """Process large files by splitting into row-based chunks and merging results."""
-    import asyncio
-
-    lines = text.split("\n")
-
-    # Find the header (first non-empty line or sheet header)
-    header_lines = []
-    data_lines = []
-    in_header = True
-    for line in lines:
-        stripped = line.strip()
-        if in_header:
-            header_lines.append(line)
-            # Once we hit a line with commas (data row), switch to data mode
-            if stripped.count(",") >= 2 and not stripped.startswith("---"):
-                in_header = False
-                # The last header line is actually the first data row's header
-                # Keep it as header for each chunk
-        else:
-            data_lines.append(line)
-
-    # If no clear header/data split, just split by lines
-    if len(data_lines) == 0:
-        header_lines = lines[:2]  # first 2 lines as header
-        data_lines = lines[2:]
-
-    header_text = "\n".join(header_lines)
-    CHUNK_SIZE = 300  # rows per chunk (keeps each ~12K tokens, well under 30K TPM)
-
-    chunks = []
-    for i in range(0, len(data_lines), CHUNK_SIZE):
-        chunk_rows = data_lines[i:i + CHUNK_SIZE]
-        chunk_text = header_text + "\n" + "\n".join(chunk_rows)
-        chunks.append(chunk_text)
-
-    logger.info(f"Split into {len(chunks)} chunks ({len(data_lines)} data rows, {CHUNK_SIZE} per chunk)")
-
-    async def process_chunk(chunk_text: str, chunk_idx: int) -> dict:
-        chunk_prompt = prompt + f"\n\nNOTE: This is chunk {chunk_idx + 1} of {len(chunks)}. Extract all data from this chunk."
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                result = await call_ai_json(
-                    system_prompt=chunk_prompt,
-                    user_content=chunk_text,
-                    max_tokens=16000,
-                    temperature=0.1,
-                )
-                logger.info(f"  Chunk {chunk_idx + 1}/{len(chunks)}: OK ({len(result)} keys)")
-                return result
-            except Exception as e:
-                wait_time = 30 * (attempt + 1)
-                logger.warning(f"  Chunk {chunk_idx + 1} attempt {attempt + 1} failed: {e}. Retry in {wait_time}s")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(wait_time)
-                else:
-                    logger.error(f"  Chunk {chunk_idx + 1}/{len(chunks)} failed after {max_retries} retries")
-                    return {}
-
-    # Process chunks sequentially (1 at a time) with 30s gap to respect TPM limits
-    all_results = []
-    for i, chunk_text in enumerate(chunks):
-        result = await process_chunk(chunk_text, i)
-        all_results.append(result)
-        if i < len(chunks) - 1:
-            await asyncio.sleep(30)  # 30s gap between chunks to stay under 30K TPM
-
-    # Merge all chunk results
-    merged = _merge_structured_results(all_results, instrument_type)
-    logger.info(f"Merged {len(all_results)} chunks → {sum(len(v) for v in merged.values() if isinstance(v, list))} total items")
-    return merged
+def _structure_with_rules(text: str, instrument_type: str) -> dict:
+    """Structure extracted text using rule-based parsers (no AI cost)."""
+    if instrument_type == "demat" or instrument_type.startswith("demat_"):
+        return parse_demat_markdown(text)
+    elif instrument_type == "mutual_fund":
+        return parse_cas_markdown(text)
+    elif instrument_type == "pms":
+        return parse_pms_markdown(text)
+    else:
+        # Default to demat parser for unknown types
+        return parse_demat_markdown(text)
 
 
 def _merge_structured_results(results: list, instrument_type: str) -> dict:
@@ -421,53 +344,18 @@ def _merge_structured_results(results: list, instrument_type: str) -> dict:
     return merged
 
 
-async def _generate_journal_entries(structured_data: dict) -> dict:
-    """Generate journal entries from structured instrument data. Chunks large datasets."""
-    import asyncio
+def _generate_journal_entries_rules(structured_data: dict, instrument_type: str) -> dict:
+    """Generate journal entries using rule-based accounting logic (no AI cost)."""
+    if instrument_type == "mutual_fund":
+        entries = generate_journal_entries_from_parsed(structured_data)
+    elif instrument_type == "pms":
+        entries = generate_journal_entries_for_pms(structured_data)
+    else:
+        entries = generate_journal_entries_for_demat(structured_data)
 
-    data_str = json.dumps(structured_data, default=str)
-    estimated_tokens = len(data_str) // 4
-
-    # If small enough, process in one shot
-    if estimated_tokens <= 20000:
-        return await _generate_journal_entries_single(data_str)
-
-    # Large dataset — chunk by transactions
-    logger.info(f"Large structured data (~{estimated_tokens} tokens). Chunking journal generation.")
-    transactions = structured_data.get("transactions", [])
-    BATCH = 30  # Smaller batches to avoid Claude output truncation
-    all_entries = []
-
-    for i in range(0, max(len(transactions), 1), BATCH):
-        chunk_data = {k: v for k, v in structured_data.items() if k != "transactions"}
-        chunk_data["transactions"] = transactions[i:i + BATCH]
-        chunk_str = json.dumps(chunk_data, default=str)
-
-        try:
-            result = await _generate_journal_entries_single(chunk_str)
-            entries = result.get("journal_entries", [])
-            all_entries.extend(entries)
-            logger.info(f"  JE batch {i // BATCH + 1}: {len(entries)} entries")
-        except Exception as e:
-            logger.error(f"  JE batch {i // BATCH + 1} failed: {e}")
-
-        if i + BATCH < len(transactions):
-            await asyncio.sleep(2)
-
-    validated = _validate_journal_entries(all_entries)
+    validated = _validate_journal_entries(entries)
     return {"journal_entries": validated}
 
-
-async def _generate_journal_entries_single(data_str: str) -> dict:
-    """Generate journal entries for a single chunk."""
-    result = await call_ai_json(
-        system_prompt=JOURNAL_ENTRY_PROMPT,
-        user_content=data_str,
-        max_tokens=8000,
-        temperature=0.1,
-    )
-    result["journal_entries"] = _validate_journal_entries(result.get("journal_entries", []))
-    return result
 
 
 def _validate_journal_entries(entries: list) -> list:
@@ -582,31 +470,14 @@ async def _process_upload(upload_id: str, file_bytes: bytes, filename: str, inst
 
                 base_type = instrument_type.split('_')[0] if instrument_type.startswith('demat_') else instrument_type
 
-                # Try AI first, fallback to rule-based parser for CAS
-                try:
-                    structured = await _structure_with_claude(raw_text, base_type)
-                    row.structured_data = structured
-                    row.status = "generating_entries"
-                    await db.commit()
+                # Rule-based parser (no AI cost)
+                structured = _structure_with_rules(raw_text, base_type)
+                row.structured_data = structured
+                row.status = "generating_entries"
+                await db.commit()
 
-                    journal = await _generate_journal_entries(structured)
-                    entries = journal.get("journal_entries", [])
-                except Exception as ai_err:
-                    logger.warning(f"AI pipeline failed: {ai_err}")
-
-                    # ═══ FALLBACK: Rule-based CAS parser (no AI, free) ═══
-                    if base_type == "mutual_fund":
-                        logger.info("🔄 Falling back to rule-based CAS parser (no AI cost)")
-                        from app.services.cas_parser import parse_cas_markdown, generate_journal_entries_from_parsed
-                        structured = parse_cas_markdown(raw_text)
-                        row.structured_data = structured
-                        row.status = "generating_entries"
-                        await db.commit()
-
-                        entries = generate_journal_entries_from_parsed(structured)
-                        logger.info(f"✅ CAS parser: {len(entries)} entries from {len(structured.get('transactions', []))} transactions")
-                    else:
-                        raise ai_err  # Re-raise for non-CAS types
+                journal = _generate_journal_entries_rules(structured, base_type)
+                entries = journal.get("journal_entries", [])
 
                 row.journal_entries = entries
                 row.journal_entry_count = len(entries)
@@ -1104,19 +975,8 @@ async def _process_26as_upload(upload_id: str, file_bytes: bytes, filename: str,
             row.raw_text = raw_text[:2000]
             await db.commit()
 
-            # AI extraction
-            estimated_tokens = len(raw_text) // 4
-
-            if estimated_tokens > 20000:
-                # Chunked processing for large 26AS
-                structured = await _structure_chunked(raw_text, "26as", TDS_26AS_PROMPT)
-            else:
-                structured = await call_ai_json(
-                    system_prompt=TDS_26AS_PROMPT,
-                    user_content=raw_text,
-                    max_tokens=16000,
-                    temperature=0.1,
-                )
+            # Rule-based 26AS extraction (no AI cost)
+            structured = parse_26as_markdown(raw_text)
 
             # Run auto-matching
             row.status = "generating_entries"

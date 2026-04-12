@@ -28,8 +28,6 @@ services:
       SECRET_KEY: ${SECRET_KEY:-dev_secret_key}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-'["*"]'}
       APP_RELOAD: ${APP_RELOAD:-"true"}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     depends_on:
       db:
         condition: service_healthy

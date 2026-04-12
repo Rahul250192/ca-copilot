@@ -14,9 +14,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8 
 
     DATABASE_URL: str
-    OPENAI_API_KEY: Optional[str] = None
-    ANTHROPIC_API_KEY: Optional[str] = None
-    GOOGLE_AI_API_KEY: Optional[str] = None
+    # AI API keys removed — using rule-based parsers (no AI cost)
+    # OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_AI_API_KEY no longer needed
     
     # Supabase Storage
     SUPABASE_URL: Optional[str] = None

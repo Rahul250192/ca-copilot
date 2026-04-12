@@ -283,48 +283,7 @@ async def ai_select_clauses(
 
     clauses = atype.default_clauses or []
 
-    # Try AI-powered selection
-    try:
-        from app.services.ai_client import call_ai
-        import asyncio
-
-        clause_summary = "\n".join(
-            [f"- {c['id']}: {c['title']} (default={'yes' if c.get('is_default') else 'no'})" for c in clauses]
-        )
-
-        prompt = f"""You are a legal expert specializing in Indian law.
-The user is creating a "{atype.name}" agreement.
-{f'Additional context: {body.context}' if body.context else ''}
-
-Here are the available clauses:
-{clause_summary}
-
-Based on best practices and the context, recommend which clauses should be ENABLED.
-Return ONLY a JSON array of clause IDs that should be enabled.
-Example: ["pd_1", "pd_2", "pd_5"]"""
-
-        reply = await call_ai(
-            system_prompt="You are a legal clause recommender. Return ONLY a JSON array.",
-            user_content=prompt,
-            max_tokens=500,
-            temperature=0.3,
-        )
-
-        import re
-        reply = reply.strip()
-        match = re.search(r'\[.*\]', reply, re.DOTALL)
-        if match:
-            recommended_ids = json.loads(match.group())
-            return {
-                "recommended_clause_ids": recommended_ids,
-                "source": "ai",
-                "message": "AI-recommended clauses based on your context.",
-            }
-
-    except Exception as e:
-        print(f"AI clause selection fallback: {e}")
-
-    # Fallback: return default clauses
+    # Return default clauses (no AI call)
     default_ids = [c["id"] for c in clauses if c.get("is_default", True)]
     return {
         "recommended_clause_ids": default_ids,

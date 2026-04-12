@@ -14,7 +14,7 @@ passlib[bcrypt]
 pydantic-settings
 email-validator
 bcrypt==3.2.0
-openai
+# openai removed — using rule-based parsers instead of AI
 httpx
 supabase
 # RAG / Documents

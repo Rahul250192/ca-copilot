@@ -139,15 +139,48 @@ async def delete_pms_account(
     current_user: User = Depends(deps.get_current_user),
     db: AsyncSession = Depends(deps.get_db),
 ) -> Any:
-    """Delete a PMS account and all its data (transactions, lots, dividends, expenses)."""
+    """Delete a PMS account and all its data (transactions, lots, dividends, expenses, uploads)."""
     row = (await db.execute(
         select(PMSAccount).where(PMSAccount.id == account_id)
     )).scalar_one_or_none()
     if not row:
         raise HTTPException(404, "PMS account not found")
+
+    # Count related data for response
+    tx_count = (await db.execute(
+        select(func.count()).select_from(PMSTransaction).where(PMSTransaction.pms_account_id == account_id)
+    )).scalar() or 0
+    div_count = (await db.execute(
+        select(func.count()).select_from(PMSDividend).where(PMSDividend.pms_account_id == account_id)
+    )).scalar() or 0
+    exp_count = (await db.execute(
+        select(func.count()).select_from(PMSExpense).where(PMSExpense.pms_account_id == account_id)
+    )).scalar() or 0
+
+    # Delete associated fi_uploads (would otherwise be orphaned with NULL pms_account_id)
+    upload_del = await db.execute(
+        delete(FinancialInstrumentUpload).where(FinancialInstrumentUpload.pms_account_id == account_id)
+    )
+    uploads_deleted = upload_del.rowcount
+
+    # Cascade deletes transactions, dividends, expenses, lots, gain matches
     await db.delete(row)
     await db.commit()
-    return {"message": "PMS account deleted"}
+
+    label = f"{row.provider_name}"
+    if row.strategy_name:
+        label += f" — {row.strategy_name}"
+
+    logger.info(f"🗑 Deleted PMS account '{label}': {tx_count} txns, {div_count} divs, {exp_count} expenses, {uploads_deleted} uploads")
+    return {
+        "message": f"PMS account '{label}' deleted",
+        "deleted": {
+            "transactions": tx_count,
+            "dividends": div_count,
+            "expenses": exp_count,
+            "uploads": uploads_deleted,
+        },
+    }
 
 
 # ═══════════════════════════════════════════════════════
@@ -1227,7 +1260,7 @@ Return this exact JSON:
 }"""
 
 import hashlib
-from app.services.ai_client import call_ai
+from app.services.fi_rule_parsers import parse_pms_markdown, _parse_date, _parse_float
 
 from app.db.session import AsyncSessionLocal
 
@@ -1239,146 +1272,13 @@ async def _extract_text_for_pms(file_bytes: bytes, filename: str) -> str:
 
 
 async def _parse_pms_with_claude(text: str, statement_type: str) -> dict:
-    """Parse extracted text with statement-type-specific prompt.
-    For large PDFs, splits into chunks and merges results to capture ALL entries."""
-    prompts = {
-        "transaction": PMS_TX_PROMPT,
-        "dividend": PMS_DIV_PROMPT,
-        "expenses": PMS_EXP_PROMPT,
-    }
-    prompt = prompts.get(statement_type, PMS_TX_PROMPT)
-    array_key = {"transaction": "transactions", "dividend": "dividends", "expenses": "expenses"}.get(statement_type, "data")
+    """Parse PMS statement using rule-based parser (no AI cost).
+    Kept as async for interface compatibility."""
+    from app.services.pms_rule_parser import parse_pms_statement
+    result = parse_pms_statement(text, statement_type)
+    logger.info(f"PMS rule parser ({statement_type}): {len(result.get(statement_type + 's', result.get('transactions', [])))} entries")
+    return result
 
-    # gpt-4o: 128K context window, 16K completion tokens (~60K chars output)
-    # 25K input was too large — GPT output exceeded 16K tokens, got truncated
-    # 15K input → ~35K JSON output, safely within 16K output token limit
-    CHUNK_SIZE = 15000
-
-    if len(text) <= CHUNK_SIZE:
-        # Small file — single call
-        result = await _call_claude_json(prompt, text)
-        return result
-    else:
-        # Large file — split into chunks, parse ALL in parallel, merge
-        chunks = _split_text_smartly(text, CHUNK_SIZE)
-        logger.info(f"Large PMS PDF: {len(text)} chars → {len(chunks)} chunks (parallel)")
-
-        # Build prompts for each chunk
-        tasks = []
-        for i, chunk in enumerate(chunks):
-            chunk_prompt = prompt + f"\n\n[NOTE: This is chunk {i+1} of {len(chunks)}. Extract ALL entries from this section.]"
-            tasks.append(_call_claude_json(chunk_prompt, chunk))
-
-        # Run ALL chunks in parallel
-        import asyncio
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        all_items = []
-        metadata = {}
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"  Chunk {i+1}/{len(chunks)} failed: {result}")
-                continue
-            if i == 0:
-                metadata = {k: v for k, v in result.items() if k != array_key}
-            items = result.get(array_key, [])
-            all_items.extend(items)
-            logger.info(f"  Chunk {i+1}/{len(chunks)}: {len(items)} {array_key}")
-
-        logger.info(f"Total from all chunks: {len(all_items)} {array_key}")
-        metadata[array_key] = all_items
-        return metadata
-
-
-def _split_text_smartly(text: str, chunk_size: int) -> list:
-    """Split text at line boundaries (not mid-row). Looks for page/section breaks."""
-    chunks = []
-    lines = text.split('\n')
-    current_chunk = []
-    current_len = 0
-
-    for line in lines:
-        line_len = len(line) + 1  # +1 for newline
-        if current_len + line_len > chunk_size and current_chunk:
-            chunks.append('\n'.join(current_chunk))
-            current_chunk = []
-            current_len = 0
-        current_chunk.append(line)
-        current_len += line_len
-
-    if current_chunk:
-        chunks.append('\n'.join(current_chunk))
-
-    return chunks
-
-
-async def _call_claude_json(system_prompt: str, user_text: str) -> dict:
-    """Single AI call with JSON response + repair on truncation."""
-    raw = await call_ai(
-        system_prompt=system_prompt + "\n\nReturn ONLY valid JSON. No markdown fences, no extra text.",
-        user_content=user_text,
-        max_tokens=16384,
-        temperature=0.1,
-    )
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.warning(f"JSON truncated ({len(raw)} chars). Repairing...")
-        return _repair_truncated_json(raw)
-
-
-def _repair_truncated_json(raw: str) -> dict:
-    """Repair truncated JSON from GPT (output hit token limit mid-array)."""
-    # Strategy: find the last complete JSON object in the array, then close it
-    last_good = -1
-    brace_depth = 0
-    in_string = False
-    escape_next = False
-
-    for i, ch in enumerate(raw):
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == '\\':
-            escape_next = True
-            continue
-        if ch == '"' and not escape_next:
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == '{':
-            brace_depth += 1
-        elif ch == '}':
-            brace_depth -= 1
-            if brace_depth >= 1:  # closed an inner object (array element)
-                last_good = i
-
-    if last_good > 0:
-        candidate = raw[:last_good + 1].rstrip().rstrip(',') + ']}'
-        try:
-            result = json.loads(candidate)
-            # Find the array key
-            for k, v in result.items():
-                if isinstance(v, list):
-                    logger.info(f"JSON repair: recovered {len(v)} items from key '{k}'")
-                    break
-            return result
-        except json.JSONDecodeError:
-            pass
-
-    # Fallback: extract individual {...} objects
-    import re
-    objects = []
-    for match in re.finditer(r'\{[^{}]*\}', raw):
-        try:
-            objects.append(json.loads(match.group()))
-        except json.JSONDecodeError:
-            continue
-
-    if objects:
-        logger.info(f"JSON repair (regex): recovered {len(objects)} items")
-    return {"data": objects}
 
 
 def _normalize_for_review(parsed: dict, statement_type: str) -> dict:

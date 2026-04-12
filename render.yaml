@@ -13,7 +13,7 @@ services:
         sync: false
       - key: SUPABASE_BUCKET
         value: "knowledge-kits"
-      - key: OPENAI_API_KEY
+      - key: LLAMA_CLOUD_API_KEY
         sync: false
       - key: SECRET_KEY
         generateValue: true

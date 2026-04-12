@@ -911,3 +911,21 @@ class DepreciationAsset(Base):
         Index('idx_dep_fy', 'client_id', 'financial_year'),
     )
 
+
+class FirmConfig(Base):
+    """Key-value configuration store per firm.
+    Supports arbitrary config keys like 'gst_deadlines', 'defaults', etc.
+    Actual config data stored as JSONB for maximum flexibility."""
+    __tablename__ = "firm_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    firm_id = Column(UUID(as_uuid=True), ForeignKey("firms.id", ondelete="CASCADE"), nullable=False, index=True)
+    config_key = Column(String(100), nullable=False)          # e.g. 'gst_deadlines', 'invoice_defaults'
+    config_data = Column(JSONB, nullable=False, default={})   # full config payload
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        sa.UniqueConstraint('firm_id', 'config_key', name='uq_firm_config_key'),
+        Index('idx_firm_config_firm', 'firm_id'),
+    )

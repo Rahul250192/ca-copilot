@@ -12,7 +12,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from app.services.ai_client import call_ai
+from app.services.banking.statement_parser_rules import parse_bank_statement_from_text
 
 from app.core.config import settings
 
@@ -205,87 +205,17 @@ def _repair_json(raw: str) -> dict:
 PAGES_PER_CHUNK = 5  # Process 5 pages at a time
 
 
-async def _call_claude_chunk(client_unused, text_chunk: str, is_first: bool) -> Dict[str, Any]:
-    """Send a single chunk to AI and return parsed JSON."""
-    prompt = STRUCTURING_PROMPT
-    if not is_first:
-        prompt += "\n\nNOTE: This is a CONTINUATION of a multi-page statement. Extract ONLY the transactions from this section. For bank_name, account_number, period_start, period_end, opening_balance, closing_balance — set them to null (they were captured from the first chunk)."
-
-    content = await call_ai(
-        system_prompt=prompt,
-        user_content=text_chunk,
-        max_tokens=16000,
-        temperature=0.1,
-    )
-    logger.info(f"  Chunk response: {len(content)} chars")
-
-    return _repair_json(content)
-
-
 async def structure_with_claude(extracted_text: str) -> Dict[str, Any]:
-    """Step 2: Use AI to structure the extracted text into JSON.
-    For large statements, splits into chunks of 5 pages and merges results."""
+    """Step 2: Parse extracted text into structured JSON using rule-based parser.
+    No AI calls — uses regex-based markdown table parsing."""
 
-    client = None  # Not needed — ai_client handles provider selection
+    logger.info(f"Parsing statement: {len(extracted_text)} chars")
 
-    # Split text into pages
-    pages = extracted_text.split("--- PAGE BREAK ---")
-    page_count = len(pages)
-    logger.info(f"Statement has {page_count} pages, {len(extracted_text)} chars total")
+    result = parse_bank_statement_from_text(extracted_text)
+    txn_count = len(result.get("transactions", []))
+    logger.info(f"✅ Rule-based parser extracted {txn_count} transactions")
 
-    # Small statement (≤5 pages) — single call
-    if page_count <= PAGES_PER_CHUNK:
-        logger.info("Small statement — single AI call")
-        try:
-            result = await _call_claude_chunk(client, extracted_text, is_first=True)
-            txn_count = len(result.get("transactions", []))
-            logger.info(f"✅ Extracted {txn_count} transactions in single call")
-            return result
-        except Exception as e:
-            logger.error(f"AI structuring failed: {e}")
-            raise
-
-    # Large statement — process in chunks of 5 pages
-    chunks = []
-    for i in range(0, page_count, PAGES_PER_CHUNK):
-        chunk_pages = pages[i:i + PAGES_PER_CHUNK]
-        chunks.append("\n\n--- PAGE BREAK ---\n\n".join(chunk_pages))
-
-    logger.info(f"Large statement — splitting into {len(chunks)} chunks of {PAGES_PER_CHUNK} pages each")
-
-    # Process first chunk (gets metadata + transactions)
-    try:
-        first_result = await _call_claude_chunk(client, chunks[0], is_first=True)
-    except Exception as e:
-        logger.error(f"First chunk failed: {e}")
-        raise
-
-    all_transactions = first_result.get("transactions", [])
-    logger.info(f"  Chunk 1/{len(chunks)}: {len(all_transactions)} transactions")
-
-    # Process remaining chunks IN PARALLEL (transactions only)
-    import asyncio
-    async def _process_chunk(idx, chunk_text):
-        try:
-            chunk_result = await _call_claude_chunk(client, chunk_text, is_first=False)
-            chunk_txns = chunk_result.get("transactions", [])
-            logger.info(f"  Chunk {idx}/{len(chunks)}: {len(chunk_txns)} transactions")
-            return chunk_txns
-        except Exception as e:
-            logger.error(f"Chunk {idx} failed: {e}. Skipping.")
-            return []
-
-    if len(chunks) > 1:
-        tasks = [_process_chunk(idx, ct) for idx, ct in enumerate(chunks[1:], start=2)]
-        results = await asyncio.gather(*tasks)
-        for txns in results:
-            all_transactions.extend(txns)
-
-    # Merge: use first chunk's metadata + all transactions
-    first_result["transactions"] = all_transactions
-    logger.info(f"✅ Total: {len(all_transactions)} transactions from {len(chunks)} chunks")
-
-    return first_result
+    return result
 
 
 def safe_date(val: Any) -> Optional[date]:

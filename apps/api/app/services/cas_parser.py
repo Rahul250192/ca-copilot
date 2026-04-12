@@ -30,17 +30,59 @@ def parse_cas_markdown(raw_text: str) -> Dict[str, Any]:
         "folios": [],
         "investor_name": "",
         "statement_period": "",
+        "period_start": "",
+        "period_end": "",
+        "pan": "",
+        "source": "",
     }
 
     lines = raw_text.split("\n")
 
-    # Extract investor name (usually first bold line or entity name)
-    for line in lines[:10]:
-        clean = line.strip().replace("**", "")
-        if clean and not clean.startswith("Email") and not clean.startswith("Mobile") and not clean.startswith("This") and len(clean) > 5:
-            if not any(kw in clean.lower() for kw in ["email", "mobile", "consolidated", "investor", "http"]):
-                result["investor_name"] = clean
-                break
+    # LlamaParse often puts all text in markdown table cells with <br/> tags
+    # Normalize: also split on <br/> and strip markdown escapes for metadata search
+    normalized_text = raw_text.replace("<br/>", "\n").replace("<br>", "\n")
+    normalized_text = normalized_text.replace("\\*\\*", "").replace("\\*", "").replace("**", "")
+    norm_lines = normalized_text.split("\n")
+
+    # Search the ENTIRE normalized text for period (it can be anywhere in first few pages)
+    period_match = re.search(r'(\d{1,2}-\w{3}-\d{4})\s*(?:to|To|TO)\s*(\d{1,2}-\w{3}-\d{4})', normalized_text)
+    if period_match:
+        result["period_start"] = period_match.group(1)
+        result["period_end"] = period_match.group(2)
+        result["statement_period"] = f"{period_match.group(1)} to {period_match.group(2)}"
+
+    # Search entire text for PAN
+    pan_match = re.search(r'PAN[:\s]*([A-Z]{5}\d{4}[A-Z])', normalized_text)
+    if pan_match:
+        result["pan"] = pan_match.group(1)
+
+    # Source: CAMS or KFintech
+    norm_lower = normalized_text.lower()
+    if 'cams' in norm_lower:
+        result["source"] = "CAMS"
+    if 'kfintech' in norm_lower or 'karvy' in norm_lower:
+        result["source"] = result["source"] + " / KFintech" if result["source"] else "KFintech"
+
+    # Extract investor name — look for bold entity/company names
+    # Try common patterns: **COMPANY NAME** or standalone company lines
+    company_match = re.search(r'\*\*([A-Z][A-Z\s&.,]+(?:PRIVATE|PVT|LTD|LIMITED|LLP|FIRM|HUF|TRUST)[A-Z\s&.,]*)\*\*', raw_text)
+    if company_match:
+        result["investor_name"] = company_match.group(1).strip()
+    else:
+        # Fallback: search normalized lines for investor name
+        for line in norm_lines[:30]:
+            clean = line.strip()
+            if clean and len(clean) > 5 and len(clean) < 80:
+                if not any(kw in clean.lower() for kw in [
+                    "email", "mobile", "consolidated", "investor", "http",
+                    "cams", "kfintech", "account statement", "brought to you",
+                    "holdings", "please check", "registered", "|", "---",
+                    "this statement", "if you find"
+                ]):
+                    if re.search(r'\d{1,2}-\w{3}-\d{4}', clean):
+                        continue
+                    result["investor_name"] = clean
+                    break
 
     # Parse portfolio summary table
     result["portfolio_summary"] = _parse_portfolio_summary(raw_text)
@@ -66,9 +108,33 @@ def parse_cas_markdown(raw_text: str) -> Dict[str, Any]:
         for folio in folios:
             result["transactions"].extend(folio.get("transactions", []))
 
+    # If period wasn't found in text, derive from transaction date range
+    if not result["period_start"] and result["transactions"]:
+        txn_dates = []
+        for txn in result["transactions"]:
+            d = txn.get("date", "")
+            if d:
+                try:
+                    txn_dates.append(datetime.strptime(d, "%d-%b-%Y"))
+                except ValueError:
+                    pass
+        if txn_dates:
+            min_dt = min(txn_dates)
+            max_dt = max(txn_dates)
+            # Infer FY: if earliest txn is Apr or later, start = 01-Apr-YYYY
+            fy_start_year = min_dt.year if min_dt.month >= 4 else min_dt.year - 1
+            fy_start = datetime(fy_start_year, 4, 1)
+            fy_end = datetime(fy_start_year + 1, 3, 31)
+            result["period_start"] = fy_start.strftime("%d-%b-%Y")
+            result["period_end"] = fy_end.strftime("%d-%b-%Y")
+            result["statement_period"] = f"{result['period_start']} to {result['period_end']}"
+            logger.info(f"CAS period derived from txn dates: {result['period_start']} to {result['period_end']}")
+
     logger.info(f"CAS Parser: {len(result['portfolio_summary'])} funds, "
                 f"{len(result['folios'])} folios, "
-                f"{len(result['transactions'])} transactions")
+                f"{len(result['transactions'])} transactions, "
+                f"period={result['period_start']} to {result['period_end']}, "
+                f"PAN={result['pan']}, source={result['source']}")
 
     return result
 
@@ -238,8 +304,8 @@ def generate_journal_entries_from_parsed(parsed_data: Dict) -> List[Dict]:
                 "voucher_type": "Purchase",
                 "narration": narration,
                 "ledger_entries": [
-                    {"ledger": f"{scheme} - {fund_house}", "side": "Dr", "amount": amount},
-                    {"ledger": "Bank Account", "side": "Cr", "amount": amount},
+                    {"ledger_name": f"{scheme} - {fund_house}", "side": "Dr", "amount": amount},
+                    {"ledger_name": "Bank Account", "side": "Cr", "amount": amount},
                 ]
             })
         elif txn_type == "Redemption":
@@ -248,8 +314,8 @@ def generate_journal_entries_from_parsed(parsed_data: Dict) -> List[Dict]:
                 "voucher_type": "Receipt",
                 "narration": narration,
                 "ledger_entries": [
-                    {"ledger": "Bank Account", "side": "Dr", "amount": amount},
-                    {"ledger": f"{scheme} - {fund_house}", "side": "Cr", "amount": amount},
+                    {"ledger_name": "Bank Account", "side": "Dr", "amount": amount},
+                    {"ledger_name": f"{scheme} - {fund_house}", "side": "Cr", "amount": amount},
                 ]
             })
         elif txn_type == "Dividend":
@@ -258,8 +324,8 @@ def generate_journal_entries_from_parsed(parsed_data: Dict) -> List[Dict]:
                 "voucher_type": "Receipt",
                 "narration": narration,
                 "ledger_entries": [
-                    {"ledger": "Bank Account", "side": "Dr", "amount": amount},
-                    {"ledger": f"Dividend Income - {scheme}", "side": "Cr", "amount": amount},
+                    {"ledger_name": "Bank Account", "side": "Dr", "amount": amount},
+                    {"ledger_name": f"Dividend Income - {scheme}", "side": "Cr", "amount": amount},
                 ]
             })
         elif txn_type in ("Switch In", "Switch Out"):
@@ -269,8 +335,8 @@ def generate_journal_entries_from_parsed(parsed_data: Dict) -> List[Dict]:
                 "voucher_type": "Journal",
                 "narration": narration,
                 "ledger_entries": [
-                    {"ledger": f"{scheme} - {fund_house}", "side": "Dr" if txn_type == "Switch In" else "Cr", "amount": amount},
-                    {"ledger": f"Mutual Fund Switch A/c", "side": "Cr" if txn_type == "Switch In" else "Dr", "amount": amount},
+                    {"ledger_name": f"{scheme} - {fund_house}", "side": "Dr" if txn_type == "Switch In" else "Cr", "amount": amount},
+                    {"ledger_name": f"Mutual Fund Switch A/c", "side": "Cr" if txn_type == "Switch In" else "Dr", "amount": amount},
                 ]
             })
         elif txn_type == "Stamp Duty":
@@ -279,8 +345,8 @@ def generate_journal_entries_from_parsed(parsed_data: Dict) -> List[Dict]:
                 "voucher_type": "Payment",
                 "narration": narration,
                 "ledger_entries": [
-                    {"ledger": "Stamp Duty Expense", "side": "Dr", "amount": amount},
-                    {"ledger": "Bank Account", "side": "Cr", "amount": amount},
+                    {"ledger_name": "Stamp Duty Expense", "side": "Dr", "amount": amount},
+                    {"ledger_name": "Bank Account", "side": "Cr", "amount": amount},
                 ]
             })
         else:
@@ -290,8 +356,8 @@ def generate_journal_entries_from_parsed(parsed_data: Dict) -> List[Dict]:
                 "voucher_type": "Journal",
                 "narration": narration,
                 "ledger_entries": [
-                    {"ledger": f"{scheme} - {fund_house}", "side": "Dr", "amount": amount},
-                    {"ledger": "Bank Account", "side": "Cr", "amount": amount},
+                    {"ledger_name": f"{scheme} - {fund_house}", "side": "Dr", "amount": amount},
+                    {"ledger_name": "Bank Account", "side": "Cr", "amount": amount},
                 ]
             })
 

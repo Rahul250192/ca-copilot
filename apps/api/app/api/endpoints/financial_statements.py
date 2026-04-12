@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from app.services.ai_client import call_ai_json
+from app.services.fs_rule_parser import parse_trial_balance, parse_balance_sheet, map_tb_to_schedule_iii
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select, func
@@ -251,12 +251,20 @@ async def _extract_text(file_bytes: bytes, filename: str) -> str:
 
 
 async def _call_claude(prompt: str, text: str, max_tokens: int = 16000) -> dict:
-    return await call_ai_json(
-        system_prompt=prompt,
-        user_content=text,
-        max_tokens=max_tokens,
-        temperature=0.1,
-    )
+    """Rule-based parser replacement for AI call.
+    Routes to appropriate parser based on prompt content."""
+    prompt_lower = prompt.lower()[:200]
+    if 'trial balance' in prompt_lower:
+        return parse_trial_balance(text)
+    elif 'balance sheet' in prompt_lower:
+        return parse_balance_sheet(text)
+    elif 'mapping' in prompt_lower or 'generate' in prompt_lower:
+        # TB → BS/PL mapping
+        # text contains combined TB + prev BS data
+        tb_data = parse_trial_balance(text)
+        return map_tb_to_schedule_iii(tb_data)
+    else:
+        return parse_trial_balance(text)
 
 
 # ─── Supabase upload ──────────────────────────────────
