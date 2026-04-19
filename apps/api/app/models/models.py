@@ -566,6 +566,7 @@ class FinancialInstrumentUpload(Base):
     structured_data = Column(JSONB, nullable=True)                # AI-extracted holdings/transactions/dividends
     journal_entries = Column(JSONB, nullable=True, default=[])    # AI-generated Dr/Cr entries
     journal_entry_count = Column(Integer, default=0)
+    je_status = Column(String(20), default="pending")             # pending / approved / synced — tracks approval state of generated journal entries
     pms_account_id = Column(UUID(as_uuid=True), ForeignKey("pms_accounts.id", ondelete="SET NULL"), nullable=True)  # links PMS uploads to specific account
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -585,6 +585,7 @@ async def get_upload_status(
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "has_data": row.structured_data is not None,
         "journal_entry_count": row.journal_entry_count or 0,
+        "je_status": row.je_status or "pending",
     }
 
 
@@ -654,6 +655,7 @@ async def list_uploads(
             "status": r.status,
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "journal_entry_count": r.journal_entry_count or 0,
+            "je_status": r.je_status or "pending",
             "pms_account_id": str(r.pms_account_id) if r.pms_account_id else None,
         }
         for r in rows
@@ -717,6 +719,36 @@ async def get_upload_pdf(
     except Exception as e:
         logger.warning(f"PDF URL generation failed: {e}")
         raise HTTPException(400, f"Could not generate PDF URL: {str(e)}")
+
+
+# ─── Approve / Sync Journal Entries ───────────────────
+from pydantic import BaseModel as BaseModel  # noqa: E402 (re-import for scope)
+
+class JeStatusUpdate(BaseModel):
+    je_status: str  # pending, approved, synced
+
+
+@router.patch("/{upload_id}/je-status")
+async def update_je_status(
+    upload_id: str,
+    payload: JeStatusUpdate,
+    current_user: User = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(deps.get_db),
+) -> Any:
+    """Update the journal entry approval status of an upload (pending → approved → synced)."""
+    if payload.je_status not in ("pending", "approved", "synced"):
+        raise HTTPException(400, "je_status must be pending, approved, or synced")
+
+    row = (await db.execute(
+        select(FinancialInstrumentUpload).where(FinancialInstrumentUpload.id == upload_id)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Upload not found")
+
+    row.je_status = payload.je_status
+    await db.commit()
+    logger.info(f"📋 Upload {upload_id} je_status → {payload.je_status}")
+    return {"id": upload_id, "je_status": payload.je_status, "message": f"Journal entries marked as {payload.je_status}"}
 
 
 # ═══════════════════════════════════════════════════════
