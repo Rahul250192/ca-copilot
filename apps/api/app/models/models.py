@@ -311,8 +311,9 @@ class Ledger(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     company_name = Column(Text, nullable=False, index=True)
     name = Column(Text, nullable=False)
-    parent = Column(Text, nullable=True)
-    opening_balance = Column(sa.Numeric, nullable=True)     # positive = Cr, negative = Dr
+    parent = Column(Text, nullable=True)                     # immediate parent group (e.g. 'WHITE OAK PIONEER EQUITY')
+    primary_group = Column(Text, nullable=True)              # root BS group resolved from hierarchy (e.g. 'Investments')
+    opening_balance = Column(sa.Numeric, nullable=True)      # positive = Cr, negative = Dr
     closing_balance = Column(sa.Numeric, nullable=True)
     party_gstin = Column(Text, nullable=True, index=True)
     gst_registration_type = Column(Text, nullable=True)
@@ -327,6 +328,7 @@ class Ledger(Base):
     __table_args__ = (
         sa.UniqueConstraint('company_name', 'name', name='uq_ledgers_company_name'),
         Index('idx_ledgers_parent', 'company_name', 'parent'),
+        Index('idx_ledgers_primary_group', 'company_name', 'primary_group'),
     )
 
 
@@ -376,6 +378,7 @@ class VoucherEntry(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     company_name = Column(Text, nullable=False, index=True)
     voucher_guid = Column(Text, nullable=False, index=True)  # links to vouchers.guid
+    entry_index = Column(Integer, nullable=True)              # position within voucher (used by TallyConnector upsert)
     voucher_date = Column(Text, nullable=True)               # denormalised for fast date filtering
     voucher_type = Column(Text, nullable=True)               # denormalised for fast type filtering
     ledger_name = Column(Text, nullable=False)
@@ -388,8 +391,8 @@ class VoucherEntry(Base):
                            primaryjoin="VoucherEntry.voucher_guid == Voucher.guid")
 
     __table_args__ = (
-        sa.UniqueConstraint('company_name', 'voucher_guid', 'ledger_name', 'amount',
-                            name='uq_ventry_company_guid_ledger_amount'),
+        sa.UniqueConstraint('company_name', 'voucher_guid', 'entry_index',
+                            name='uq_ventry_company_guid_entry_index'),
         Index('idx_ventry_ledger', 'company_name', 'ledger_name'),
         Index('idx_ventry_date', 'company_name', 'voucher_date'),
     )

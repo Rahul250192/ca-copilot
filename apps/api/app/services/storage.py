@@ -37,10 +37,10 @@ class GoogleDriveService:
                     creds = Credentials.from_authorized_user_file(token_path, ['https://www.googleapis.com/auth/drive'])
                     self.service = build('drive', 'v3', credentials=creds)
                     self.enabled = True
-                    print(f"✅ Google Drive Initialized with User Credentials ({token_path})")
+                    print(f"[OK] Google Drive Initialized with User Credentials ({token_path})")
                     return
                 except Exception as e:
-                     print(f"⚠️ Failed to init User Creds: {e}")
+                     print(f"[WARN] Failed to init User Creds: {e}")
 
             # 2. Try Service Account (google-credentials.json)
             if settings.GOOGLE_CREDENTIALS_PATH and os.path.exists(settings.GOOGLE_CREDENTIALS_PATH):
@@ -51,9 +51,9 @@ class GoogleDriveService:
                     )
                     self.service = build('drive', 'v3', credentials=creds)
                     self.enabled = True
-                    print("✅ Google Drive Service Initialized (Service Account)")
+                    print("[OK] Google Drive Service Initialized (Service Account)")
                 except Exception as e:
-                    print(f"❌ Failed to init Google Drive SA: {e}")
+                    print(f"[ERR] Failed to init Google Drive SA: {e}")
 
     def _find_or_create_folder(self, folder_name: str, parent_id: str) -> Optional[str]:
         query = f"name = '{folder_name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
@@ -232,7 +232,7 @@ class LocalStorageService:
         self.base_path = os.path.join(os.getcwd(), "uploads")
         if not os.path.exists(self.base_path):
             os.makedirs(self.base_path)
-        print(f"📂 Local Storage initialized at: {self.base_path}")
+        print(f"[Local Storage] initialized at: {self.base_path}")
 
     def upload_file(self, file_content: bytes, path: str, bucket: Optional[str] = None, content_type: str = "application/octet-stream") -> Optional[str]:
         try:
@@ -293,7 +293,7 @@ class LocalStorageService:
 class StorageService:
     def __init__(self):
         self.provider = settings.STORAGE_PROVIDER
-        print(f"🗄️ Storage Provider: {self.provider}")
+        print(f"[Storage] Provider: {self.provider}")
         
         self.supabase = SupabaseStorageService()
         self.gdrive = GoogleDriveService()

@@ -314,7 +314,7 @@ def _structure_with_rules(text: str, instrument_type: str) -> dict:
         return parse_demat_markdown(text)
     elif instrument_type == "mutual_fund":
         return parse_cas_markdown(text)
-    elif instrument_type == "pms":
+    elif instrument_type == "pms" or instrument_type.startswith("pms_"):
         return parse_pms_markdown(text)
     else:
         # Default to demat parser for unknown types
@@ -348,7 +348,7 @@ def _generate_journal_entries_rules(structured_data: dict, instrument_type: str)
     """Generate journal entries using rule-based accounting logic (no AI cost)."""
     if instrument_type == "mutual_fund":
         entries = generate_journal_entries_from_parsed(structured_data)
-    elif instrument_type == "pms":
+    elif instrument_type == "pms" or instrument_type.startswith("pms_"):
         entries = generate_journal_entries_for_pms(structured_data)
     else:
         entries = generate_journal_entries_for_demat(structured_data)
@@ -625,7 +625,23 @@ async def get_journal_entries(
         raise HTTPException(404, "Upload not found")
     if row.status != "completed":
         raise HTTPException(400, f"Entries not ready. Status: {row.status}")
-    return {"journal_entries": row.journal_entries or []}
+
+    # Return stored entries if available
+    if row.journal_entries:
+        return {"journal_entries": row.journal_entries}
+
+    # Fallback: dynamically generate from structured_data (e.g. PMS uploads)
+    if row.structured_data:
+        result = _generate_journal_entries_rules(row.structured_data, row.instrument_type)
+        entries = result.get("journal_entries", [])
+        if entries:
+            # Cache for next time
+            row.journal_entries = entries
+            row.journal_entry_count = len(entries)
+            await db.commit()
+            return {"journal_entries": entries}
+
+    return {"journal_entries": []}
 
 
 # ─── List Uploads ─────────────────────────────────────
@@ -747,7 +763,7 @@ async def update_je_status(
 
     row.je_status = payload.je_status
     await db.commit()
-    logger.info(f"📋 Upload {upload_id} je_status → {payload.je_status}")
+    logger.info(f"Upload {upload_id} je_status -> {payload.je_status}")
     return {"id": upload_id, "je_status": payload.je_status, "message": f"Journal entries marked as {payload.je_status}"}
 
 

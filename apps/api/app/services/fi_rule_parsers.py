@@ -252,8 +252,8 @@ def generate_journal_entries_for_demat(structured_data: Dict) -> List[Dict]:
                 "voucher_type": "Purchase",
                 "narration": f"Purchase of {txn.get('quantity', 0)} shares of {scrip}",
                 "ledger_entries": [
-                    {"ledger": f"Investment in Equity - {scrip}", "side": "Dr", "amount": amount},
-                    {"ledger": "Bank Account", "side": "Cr", "amount": amount},
+                    {"ledger_name": f"Investment in Equity - {scrip}", "side": "Dr", "amount": amount},
+                    {"ledger_name": "Bank Account", "side": "Cr", "amount": amount},
                 ]
             })
         elif txn_type == "Sell":
@@ -262,8 +262,8 @@ def generate_journal_entries_for_demat(structured_data: Dict) -> List[Dict]:
                 "voucher_type": "Sales",
                 "narration": f"Sale of {txn.get('quantity', 0)} shares of {scrip}",
                 "ledger_entries": [
-                    {"ledger": "Bank Account", "side": "Dr", "amount": amount},
-                    {"ledger": f"Investment in Equity - {scrip}", "side": "Cr", "amount": amount},
+                    {"ledger_name": "Bank Account", "side": "Dr", "amount": amount},
+                    {"ledger_name": f"Investment in Equity - {scrip}", "side": "Cr", "amount": amount},
                 ]
             })
         elif txn_type == "Dividend":
@@ -272,8 +272,8 @@ def generate_journal_entries_for_demat(structured_data: Dict) -> List[Dict]:
                 "voucher_type": "Receipt",
                 "narration": f"Dividend received from {scrip}",
                 "ledger_entries": [
-                    {"ledger": "Bank Account", "side": "Dr", "amount": amount},
-                    {"ledger": f"Dividend Income - {scrip}", "side": "Cr", "amount": amount},
+                    {"ledger_name": "Bank Account", "side": "Dr", "amount": amount},
+                    {"ledger_name": f"Dividend Income - {scrip}", "side": "Cr", "amount": amount},
                 ]
             })
 

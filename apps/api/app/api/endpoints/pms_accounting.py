@@ -1475,10 +1475,10 @@ async def _process_pms_upload(
             row.journal_entry_count = count
             row.status = "completed"
             await db.commit()
-            logger.info(f"✅ PMS Upload {upload_id}: {count} {statement_type} records imported")
+            logger.info(f"PMS Upload {upload_id}: {count} {statement_type} records imported")
 
         except Exception as e:
-            logger.error(f"❌ PMS Upload {upload_id} failed: {e}")
+            logger.error(f"PMS Upload {upload_id} failed: {e}")
             try:
                 row = (await db.execute(
                     select(FinancialInstrumentUpload).where(FinancialInstrumentUpload.id == upload_id)
